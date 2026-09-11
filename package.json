@@ -6,8 +6,12 @@
   "license": "UNLICENSED",
   "type": "module",
   "engines": {
-    "node": ">=20"
+    "node": "22.x"
   },
+  "allowScripts": [
+    "better-sqlite3",
+    "esbuild"
+  ],
   "scripts": {
     "build": "tsc -p tsconfig.json && cp src/persistencia/esquema.sql dist/src/persistencia/",
     "dev": "tsx watch src/index.ts",

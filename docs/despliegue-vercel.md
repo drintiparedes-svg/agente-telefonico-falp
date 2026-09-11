@@ -119,7 +119,13 @@ Con plan Hobby, dispare las tareas a mano durante una demostración.
 - Todas las rutas se reescriben a la única función. Fastify atiende la petición
   emitiendo `request` sobre su servidor interno, el patrón que recomienda su
   documentación para Vercel.
-- `better-sqlite3` es un módulo nativo. Vercel lo compila para Linux x64 durante
-  `npm ci`. Si el build falla en ese paso, revise la versión de Node del proyecto.
+- `better-sqlite3` es un módulo nativo que obtiene su binario en un script de
+  instalación. npm 12, el que usa Vercel, **bloquea esos scripts por defecto** y
+  los omite en silencio; por eso `package.json` los autoriza en `allowScripts`.
+  Sin esa entrada el despliegue termina bien y la función falla al arrancar.
+- `engines.node` está fijado en `22.x`. Con un rango abierto Vercel avisa de que
+  cambiará de versión mayor por su cuenta.
+- `public/` existe solo porque Vercel exige un directorio de salida estático
+  cuando hay `buildCommand`, aunque el proyecto sea solo API.
 - `.vercel/` está en `.gitignore`: contiene los identificadores del proyecto
   enlazado y no debe subirse.
