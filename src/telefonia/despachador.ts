@@ -1,23 +1,34 @@
 /**
  * Despachador de llamadas salientes.
  *
- * Tres restricciones que vienen del análisis de factibilidad y que aquí son código:
- *  1. Concurrencia por debajo del límite del plan, reservando capacidad para entrantes.
+ * Restricciones que vienen del análisis de factibilidad y de la plataforma, y que
+ * aquí son código:
+ *  1. Tres techos de capacidad, y manda el menor: la concurrencia del workspace de
+ *     la plataforma de voz, el techo de cada número de salida y las llamadas por
+ *     segundo que admite la cuenta de Twilio.
  *  2. Ventana horaria: no se llama a un paciente oncológico fuera de horario razonable.
  *  3. La sesión con la indicación clínica se precarga ANTES de originar la llamada.
  *     Si no hay indicación verificada, no hay llamada.
+ *  4. Sin número de salida activo no se despacha. Los trabajos esperan en la cola.
  */
 import { randomUUID } from 'node:crypto';
 import { estadoInicial } from '../dominio/checklist/maquina.js';
 import { ContextoLlamada } from '../dominio/tipos.js';
 import type { ClienteVoz } from './elevenlabs.js';
-import type { crearRepoSesiones, crearRepoTrabajos } from '../persistencia/repositorios.js';
+import { capacidadLibre, elegirNumero } from './numeros.js';
+import type { crearRepoNumeros, crearRepoSesiones, crearRepoTrabajos } from '../persistencia/repositorios.js';
 
 export interface DepsDespachador {
   trabajos: ReturnType<typeof crearRepoTrabajos>;
   sesiones: ReturnType<typeof crearRepoSesiones>;
+  numeros: ReturnType<typeof crearRepoNumeros>;
   cliente: ClienteVoz;
+  /** Techo global: concurrencia del plan de la plataforma, con reserva para entrantes. */
   concurrenciaMax: number;
+  /** Llamadas por segundo que admite la cuenta de Twilio. */
+  llamadasPorSegundo: number;
+  /** Pausa entre originaciones. Inyectable para pruebas. */
+  esperar?: (ms: number) => Promise<void>;
   log: { info: (o: unknown, m?: string) => void; warn: (o: unknown, m?: string) => void; error: (o: unknown, m?: string) => void };
 }
 
@@ -33,7 +44,19 @@ export function dentroDeVentana(fecha: Date = new Date(), tz = 'America/Santiago
   return hora >= VENTANA.desde && hora < VENTANA.hasta;
 }
 
+/**
+ * Pasado este margen, una llamada despachada sin cierre deja de ocupar capacidad.
+ * Sin él, un webhook perdido bloquearía un canal para siempre. La conciliación
+ * se ocupa de esas llamadas por separado.
+ */
+export const MARGEN_EN_CURSO_MIN = 30;
+
+const esperarReal = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
 export function crearDespachador(deps: DepsDespachador) {
+  const esperar = deps.esperar ?? esperarReal;
+  const pausa = Math.ceil(1000 / deps.llamadasPorSegundo);
+
   return {
     /** Programa una llamada. Valida la indicación antes de aceptarla en la cola. */
     programar(p: {
@@ -64,18 +87,47 @@ export function crearDespachador(deps: DepsDespachador) {
       return { ok: true, idTrabajo: id, error: null };
     },
 
-    /** Toma un lote de trabajos vencidos y los origina. */
+    /** Toma los trabajos vencidos que caben en la capacidad libre y los origina. */
     async despacharLote(ahora: Date = new Date()): Promise<{ despachados: number; omitidos: number; fallidos: number }> {
+      const vacio = { despachados: 0, omitidos: 0, fallidos: 0 };
       if (!dentroDeVentana(ahora)) {
         deps.log.info({ hora: ahora.toISOString() }, 'Fuera de ventana horaria: no se despacha');
-        return { despachados: 0, omitidos: 0, fallidos: 0 };
+        return vacio;
       }
 
-      const lote = deps.trabajos.tomarPendientes(deps.concurrenciaMax);
+      const activos = deps.numeros.activos();
+      if (activos.length === 0) {
+        deps.log.warn({}, 'Sin números de salida activos: no se despacha');
+        return vacio;
+      }
+
+      const desde = new Date(ahora.getTime() - MARGEN_EN_CURSO_MIN * 60_000).toISOString();
+      const { total, porNumero } = deps.trabajos.enCurso(desde);
+      const libres = Math.min(Math.max(0, deps.concurrenciaMax - total), capacidadLibre(activos, porNumero));
+      if (libres === 0) return vacio;
+
+      const lote = deps.trabajos.tomarPendientes(libres);
+      const carga = new Map(porNumero);
       let despachados = 0;
       let fallidos = 0;
+      let omitidos = 0;
+      let originadas = 0;
 
       for (const t of lote) {
+        const numero = elegirNumero(activos, carga);
+        if (!numero) {
+          deps.trabajos.devolver(t.id);
+          omitidos++;
+          continue;
+        }
+
+        // Twilio encola lo que exceda sus llamadas por segundo. Espaciar aquí
+        // mantiene esa cola a la vista de este servicio y no en la del proveedor.
+        if (originadas > 0) await esperar(pausa);
+        originadas++;
+        carga.set(numero.idPlataforma, (carga.get(numero.idPlataforma) ?? 0) + 1);
+        deps.trabajos.asignarNumero(t.id, numero.idPlataforma);
+
         const idConversacion = `conv_${t.id}`;
 
         // La sesión se guarda ANTES de originar. Si la llamada conecta y la sesión
@@ -89,6 +141,7 @@ export function crearDespachador(deps: DepsDespachador) {
             nombre_paciente: t.contexto.verificacion.nombrePaciente,
             fecha_procedimiento: t.contexto.indicacion.fechaProcedimiento,
           },
+          numero: { idPlataforma: numero.idPlataforma, proveedor: numero.proveedor },
         });
 
         if (r.ok && r.idConversacion) {
@@ -98,16 +151,21 @@ export function crearDespachador(deps: DepsDespachador) {
             deps.sesiones.borrar(idConversacion);
           }
           deps.trabajos.asociarConversacion(t.id, r.idConversacion);
+          deps.log.info(
+            { idTrabajo: t.id, numero: numero.idPlataforma, idLlamadaProveedor: r.idLlamadaProveedor },
+            'Llamada originada',
+          );
           despachados++;
         } else {
+          carga.set(numero.idPlataforma, Math.max(0, (carga.get(numero.idPlataforma) ?? 1) - 1));
           deps.sesiones.borrar(idConversacion);
           deps.trabajos.marcar(t.id, 'fallido');
-          deps.log.error({ idTrabajo: t.id, error: r.error }, 'Fallo al originar llamada');
+          deps.log.error({ idTrabajo: t.id, numero: numero.idPlataforma, error: r.error }, 'Fallo al originar llamada');
           fallidos++;
         }
       }
 
-      return { despachados, omitidos: 0, fallidos };
+      return { despachados, omitidos, fallidos };
     },
   };
 }

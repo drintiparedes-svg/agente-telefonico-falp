@@ -51,6 +51,11 @@ Opcionales: `CLASIFICADOR=anthropic` con `ANTHROPIC_API_KEY`, y las tres
 variables `ELEVENLABS_*` para originar llamadas reales. Sin ellas el servicio usa
 el clasificador por reglas y el cliente de voz simulado.
 
+Los números de salida y los destinos que se configuran en `/admin/*` viven en la
+base, y aquí la base es efímera: se pierden al reciclarse la instancia. Para una
+prueba en Vercel, fije el número con `ELEVENLABS_PHONE_NUMBER_ID`. Ver
+[`telefonia.md`](telefonia.md).
+
 ## Pasos
 
 Desde la carpeta del proyecto, la primera vez:

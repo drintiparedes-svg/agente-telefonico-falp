@@ -98,6 +98,12 @@ repite    el paciente pide repetir la indicación
 | `GET` | `/auditoria/:idLlamada` | Traza completa de una llamada, transición por transición |
 | `GET` | `/conciliacion` | Llamadas originadas sin resultado recibido |
 | `GET` | `/salud` | Estado del servicio y profundidad de la cola |
+| `GET` | `/admin/numeros` | Grupo de números de salida y su ocupación. Requiere `ADMIN_TOKEN` |
+| `POST` | `/admin/numeros/sincronizar` | Lee los números importados en la plataforma. Los nuevos quedan inactivos |
+| `PATCH` | `/admin/numeros/:id` | Activa, desactiva o cambia el techo de un número |
+| `GET` | `/admin/destinos` | Destinos de transferencia y número de respaldo |
+| `PUT` | `/admin/destinos/:id` | Crea o cambia un destino por motivo, servicio y horario |
+| `POST` | `/admin/agente/sincronizar` | Escribe los destinos en las reglas de transferencia del agente |
 
 ---
 
@@ -115,7 +121,7 @@ src/
   llm/
     clasificador.ts  Único punto donde interviene un modelo. Solo clasifica.
     servidor.ts      Endpoint compatible OpenAI con SSE.
-  telefonia/         Cliente de voz y despachador con ventana horaria.
+  telefonia/         Cliente de voz, grupo de números, despachador y transferencias.
   webhooks/          Recepción firmada y cola durable.
   persistencia/      SQLite con WAL. Repositorios aislados del dominio.
   conciliacion/      Cuenta llamadas originadas contra resultados recibidos.
@@ -133,7 +139,8 @@ conciliación, auditoría y simulador.
 **Falta antes de un piloto con pacientes reales:**
 
 - Integración con la agenda y la ficha clínica. Hoy la indicación entra por API.
-- Trunk SIP y numeración 600 confirmada con SUBTEL.
+- Cuenta de Twilio con números importados en ElevenLabs, y numeración 600
+  confirmada con SUBTEL. Ver [`docs/telefonia.md`](docs/telefonia.md).
 - Conversión a plan Enterprise con retención cero y contrato de encargo firmado.
 - Evaluación de impacto en protección de datos, previa y obligatoria.
 - Validación del guion por el equipo tratante, con responsable clínico nombrado.
@@ -141,6 +148,13 @@ conciliación, auditoría y simulador.
 
 Ver [`docs/cumplimiento.md`](docs/cumplimiento.md) para el detalle de lo que la
 normativa exige y qué parte de eso resuelve este código.
+
+### Telefonía
+
+Las llamadas salen por la integración nativa de Twilio con ElevenLabs. Los
+números de salida son un grupo administrable, y las transferencias se enrutan por
+motivo, servicio y horario. Hoy no hay ningún número real configurado. Qué falta,
+cómo escala y cómo se pone en marcha: [`docs/telefonia.md`](docs/telefonia.md).
 
 ### Despliegue en Vercel
 

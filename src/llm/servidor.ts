@@ -16,7 +16,8 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { estadoInicial, abrir, avanzar, validarSalida } from '../dominio/checklist/maquina.js';
 import { evaluar } from '../dominio/criterios/index.js';
-import { ContextoLlamada } from '../dominio/tipos.js';
+import { ContextoLlamada, type MotivoEnrutamiento } from '../dominio/tipos.js';
+import { argumentosTransferencia, motivoDesdeEstado } from '../telefonia/transferencias.js';
 import type { Clasificador } from './clasificador.js';
 import type { crearRepoAuditoria, crearRepoResultados, crearRepoSesiones } from '../persistencia/repositorios.js';
 
@@ -39,7 +40,8 @@ export interface DepsLLM {
   sesiones: ReturnType<typeof crearRepoSesiones>;
   auditoria: ReturnType<typeof crearRepoAuditoria>;
   resultados: ReturnType<typeof crearRepoResultados>;
-  numeroTransferencia: string;
+  /** Número al que transferir según motivo y servicio. En producción nunca es vacío. */
+  resolverTransferencia: (p: { motivo: MotivoEnrutamiento; servicio?: string | undefined }) => string;
   token: string;
   log: { info: (o: unknown, m?: string) => void; warn: (o: unknown, m?: string) => void; error: (o: unknown, m?: string) => void };
 }
@@ -106,7 +108,7 @@ export function registrarEndpointLLM(app: FastifyInstance, deps: DepsLLM): void 
       return responder(reply, {
         texto: 'Le voy a comunicar con una persona del equipo. No corte, por favor.',
         herramienta: 'transfer_to_number',
-        argumentos: { number: deps.numeroTransferencia, reason: 'salida_fuera_de_guion' },
+        argumentos: transferir(deps, ctx, 'fuera_de_guion'),
       });
     }
 
@@ -119,7 +121,7 @@ export function registrarEndpointLLM(app: FastifyInstance, deps: DepsLLM): void 
       return responder(reply, {
         texto: r.salida,
         herramienta: 'transfer_to_number',
-        argumentos: { number: deps.numeroTransferencia, reason: r.estado.estado },
+        argumentos: transferir(deps, ctx, motivoDesdeEstado(r.estado.estado)),
       });
     }
 
@@ -136,6 +138,12 @@ export function registrarEndpointLLM(app: FastifyInstance, deps: DepsLLM): void 
 
     return responder(reply, { texto: r.salida });
   });
+}
+
+/** Resuelve el destino y arma los argumentos que la plataforma exige para transferir. */
+function transferir(deps: DepsLLM, ctx: ContextoLlamada, motivo: MotivoEnrutamiento): Record<string, string> {
+  const e164 = deps.resolverTransferencia({ motivo, servicio: ctx.servicio });
+  return argumentosTransferencia({ e164, motivo, idLlamada: ctx.idLlamada });
 }
 
 /**

@@ -53,8 +53,21 @@ export const ContextoLlamada = z.object({
   idPaciente: z.string().min(1),
   verificacion: DatosVerificacion,
   indicacion: IndicacionPreparacion,
+  /**
+   * Servicio o unidad que realiza el procedimiento (por ejemplo, endoscopía).
+   * Opcional. Si viene, las transferencias se enrutan al equipo de ese servicio.
+   */
+  servicio: z.string().min(1).optional(),
 });
 export type ContextoLlamada = z.infer<typeof ContextoLlamada>;
+
+/**
+ * Motivos con que se enruta una transferencia a un destino telefónico. Conjunto
+ * cerrado y más grueso que el motivo del guardrail: agrupa lo que atiende un
+ * mismo equipo (ver src/telefonia/transferencias.ts).
+ */
+export const MOTIVOS_ENRUTAMIENTO = ['alarma', 'consulta', 'incomprension', 'fuera_de_guion'] as const;
+export type MotivoEnrutamiento = (typeof MOTIVOS_ENRUTAMIENTO)[number];
 
 /** Estados de la máquina. El orden es obligatorio y no se puede saltar. */
 export const ESTADOS = [

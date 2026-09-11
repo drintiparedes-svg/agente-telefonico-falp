@@ -1,4 +1,4 @@
-import type { ContextoLlamada, EventoAuditoria } from '../dominio/tipos.js';
+import type { ContextoLlamada, EventoAuditoria, MotivoEnrutamiento } from '../dominio/tipos.js';
 import type { EstadoLlamada } from '../dominio/checklist/maquina.js';
 import type { ResultadoLlamada } from '../dominio/criterios/index.js';
 import type { DB } from './db.js';
@@ -16,11 +16,13 @@ export interface Trabajo {
   intentos: number;
   programadoPara: string;
   idConversacion: string | null;
+  /** Número de salida (id en la plataforma) con que se originó la llamada. */
+  numeroSalida: string | null;
 }
 
 export function crearRepoTrabajos(db: DB) {
   return {
-    encolar(t: Omit<Trabajo, 'estado' | 'intentos' | 'idConversacion'>): void {
+    encolar(t: Omit<Trabajo, 'estado' | 'intentos' | 'idConversacion' | 'numeroSalida'>): void {
       db.prepare(
         `INSERT INTO trabajos (id, id_paciente, telefono, contexto_json, estado, intentos,
                                programado_para, creado_en, actualizado_en)
@@ -66,6 +68,40 @@ export function crearRepoTrabajos(db: DB) {
       db.prepare(`UPDATE trabajos SET estado=?, actualizado_en=? WHERE id=?`).run(estado, ahora(), id);
     },
 
+    asignarNumero(idTrabajo: string, idNumero: string): void {
+      db.prepare(`UPDATE trabajos SET numero_salida=?, actualizado_en=? WHERE id=?`).run(idNumero, ahora(), idTrabajo);
+    },
+
+    /**
+     * Llamadas en curso: despachadas y sin cierre desde `desde`. Pasado ese margen
+     * se asume que la llamada terminó aunque el webhook no llegara; la conciliación
+     * se ocupa de esos casos. Sin el margen, un webhook perdido ocuparía un canal
+     * para siempre.
+     */
+    enCurso(desde: string): { total: number; porNumero: Map<string, number> } {
+      const filas = db
+        .prepare(
+          `SELECT numero_salida AS n, COUNT(*) AS c FROM trabajos
+           WHERE estado='despachado' AND actualizado_en >= ?
+           GROUP BY numero_salida`,
+        )
+        .all(desde) as Array<{ n: string | null; c: number }>;
+      const porNumero = new Map<string, number>();
+      let total = 0;
+      for (const f of filas) {
+        total += f.c;
+        if (f.n) porNumero.set(f.n, f.c);
+      }
+      return { total, porNumero };
+    },
+
+    /** Devuelve a la cola un trabajo tomado que no se pudo originar, sin contar el intento. */
+    devolver(id: string): void {
+      db.prepare(
+        `UPDATE trabajos SET estado='pendiente', intentos=MAX(intentos-1, 0), actualizado_en=? WHERE id=?`,
+      ).run(ahora(), id);
+    },
+
     /** Trabajos despachados sin resultado recibido. Insumo de la conciliación diaria. */
     despachadosSinResultado(antesDe: string): Trabajo[] {
       const filas = db
@@ -90,6 +126,7 @@ function aTrabajo(f: Record<string, unknown>): Trabajo {
     intentos: Number(f['intentos']),
     programadoPara: String(f['programado_para']),
     idConversacion: f['id_conversacion'] == null ? null : String(f['id_conversacion']),
+    numeroSalida: f['numero_salida'] == null ? null : String(f['numero_salida']),
   };
 }
 
@@ -255,6 +292,179 @@ export function crearRepoSesiones(db: DB) {
     },
     borrar(idConversacion: string): void {
       db.prepare(`DELETE FROM sesiones WHERE id_conversacion=?`).run(idConversacion);
+    },
+  };
+}
+
+// ------------------------------------------------------- números de salida
+
+export type ProveedorTelefonia = 'twilio' | 'sip_trunk';
+
+export interface NumeroSalida {
+  /** `phone_number_id` del número en la plataforma de voz. */
+  idPlataforma: string;
+  e164: string;
+  etiqueta: string;
+  proveedor: ProveedorTelefonia;
+  activo: boolean;
+  /** Llamadas simultáneas que FALP permite originar desde este número. */
+  concurrenciaMax: number;
+  /** Menor gana a igual ocupación. */
+  prioridad: number;
+}
+
+export function crearRepoNumeros(db: DB) {
+  const leer = (f: Record<string, unknown>): NumeroSalida => ({
+    idPlataforma: String(f['id_plataforma']),
+    e164: String(f['e164']),
+    etiqueta: String(f['etiqueta']),
+    proveedor: String(f['proveedor']) === 'sip_trunk' ? 'sip_trunk' : 'twilio',
+    activo: Number(f['activo']) === 1,
+    concurrenciaMax: Number(f['concurrencia_max']),
+    prioridad: Number(f['prioridad']),
+  });
+  const obtener = (id: string): NumeroSalida | null => {
+    const f = db.prepare(`SELECT * FROM numeros_salida WHERE id_plataforma=?`).get(id) as
+      | Record<string, unknown>
+      | undefined;
+    return f ? leer(f) : null;
+  };
+  const insertar = db.prepare(
+    `INSERT OR IGNORE INTO numeros_salida
+       (id_plataforma, e164, etiqueta, proveedor, activo, concurrencia_max, prioridad, creado_en, actualizado_en)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  );
+
+  return {
+    listar(): NumeroSalida[] {
+      const filas = db.prepare(`SELECT * FROM numeros_salida ORDER BY prioridad, id_plataforma`).all();
+      return (filas as Record<string, unknown>[]).map(leer);
+    },
+
+    activos(): NumeroSalida[] {
+      const filas = db
+        .prepare(`SELECT * FROM numeros_salida WHERE activo=1 ORDER BY prioridad, id_plataforma`)
+        .all();
+      return (filas as Record<string, unknown>[]).map(leer);
+    },
+
+    obtener,
+
+    /** Inserta si no existe. Para el número configurado por entorno y el simulado. */
+    sembrar(n: NumeroSalida): void {
+      insertar.run(n.idPlataforma, n.e164, n.etiqueta, n.proveedor, n.activo ? 1 : 0, n.concurrenciaMax, n.prioridad, ahora(), ahora());
+    },
+
+    /**
+     * Registra un número leído de la plataforma. Un número nuevo entra INACTIVO:
+     * que esté importado en la plataforma no significa que alguien haya decidido
+     * llamar a pacientes con él. Si ya existía, solo se refrescan los datos
+     * descriptivos; su estado operativo no se toca.
+     */
+    registrarDesdePlataforma(
+      n: { idPlataforma: string; e164: string; etiqueta: string; proveedor: ProveedorTelefonia },
+      concurrenciaMax: number,
+    ): 'nuevo' | 'actualizado' {
+      if (obtener(n.idPlataforma)) {
+        db.prepare(
+          `UPDATE numeros_salida SET e164=?, etiqueta=?, proveedor=?, actualizado_en=? WHERE id_plataforma=?`,
+        ).run(n.e164, n.etiqueta, n.proveedor, ahora(), n.idPlataforma);
+        return 'actualizado';
+      }
+      insertar.run(n.idPlataforma, n.e164, n.etiqueta, n.proveedor, 0, concurrenciaMax, 100, ahora(), ahora());
+      return 'nuevo';
+    },
+
+    actualizar(
+      id: string,
+      c: {
+        activo?: boolean | undefined;
+        concurrenciaMax?: number | undefined;
+        prioridad?: number | undefined;
+        etiqueta?: string | undefined;
+      },
+    ): NumeroSalida | null {
+      const n = obtener(id);
+      if (!n) return null;
+      const m: NumeroSalida = {
+        ...n,
+        activo: c.activo ?? n.activo,
+        concurrenciaMax: c.concurrenciaMax ?? n.concurrenciaMax,
+        prioridad: c.prioridad ?? n.prioridad,
+        etiqueta: c.etiqueta ?? n.etiqueta,
+      };
+      db.prepare(
+        `UPDATE numeros_salida SET activo=?, concurrencia_max=?, prioridad=?, etiqueta=?, actualizado_en=?
+         WHERE id_plataforma=?`,
+      ).run(m.activo ? 1 : 0, m.concurrenciaMax, m.prioridad, m.etiqueta, ahora(), id);
+      return obtener(id);
+    },
+  };
+}
+
+// -------------------------------------------------- destinos de transferencia
+
+export type MotivoDestino = MotivoEnrutamiento | 'general';
+
+export interface DestinoTransferencia {
+  id: string;
+  e164: string;
+  etiqueta: string;
+  /** `general` atiende cualquier motivo que no tenga un destino propio. */
+  motivo: MotivoDestino;
+  /** Vacío: cualquier servicio. */
+  servicio: string;
+  /** Hora de Chile, inclusiva. */
+  horaDesde: number;
+  /** Hora de Chile, exclusiva. */
+  horaHasta: number;
+  /** Días en que atiende: 1 lunes … 7 domingo. */
+  dias: string;
+  prioridad: number;
+  activo: boolean;
+}
+
+export function crearRepoDestinos(db: DB) {
+  const leer = (f: Record<string, unknown>): DestinoTransferencia => ({
+    id: String(f['id']),
+    e164: String(f['e164']),
+    etiqueta: String(f['etiqueta']),
+    motivo: String(f['motivo']) as MotivoDestino,
+    servicio: String(f['servicio']),
+    horaDesde: Number(f['hora_desde']),
+    horaHasta: Number(f['hora_hasta']),
+    dias: String(f['dias']),
+    prioridad: Number(f['prioridad']),
+    activo: Number(f['activo']) === 1,
+  });
+
+  return {
+    listar(): DestinoTransferencia[] {
+      const filas = db.prepare(`SELECT * FROM destinos_transferencia ORDER BY motivo, prioridad, id`).all();
+      return (filas as Record<string, unknown>[]).map(leer);
+    },
+
+    activos(): DestinoTransferencia[] {
+      const filas = db
+        .prepare(`SELECT * FROM destinos_transferencia WHERE activo=1 ORDER BY motivo, prioridad, id`)
+        .all();
+      return (filas as Record<string, unknown>[]).map(leer);
+    },
+
+    guardar(d: DestinoTransferencia): void {
+      db.prepare(
+        `INSERT INTO destinos_transferencia
+           (id, e164, etiqueta, motivo, servicio, hora_desde, hora_hasta, dias, prioridad, activo, creado_en, actualizado_en)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(id) DO UPDATE SET
+           e164=excluded.e164, etiqueta=excluded.etiqueta, motivo=excluded.motivo,
+           servicio=excluded.servicio, hora_desde=excluded.hora_desde, hora_hasta=excluded.hora_hasta,
+           dias=excluded.dias, prioridad=excluded.prioridad, activo=excluded.activo,
+           actualizado_en=excluded.actualizado_en`,
+      ).run(
+        d.id, d.e164, d.etiqueta, d.motivo, d.servicio, d.horaDesde, d.horaHasta, d.dias,
+        d.prioridad, d.activo ? 1 : 0, ahora(), ahora(),
+      );
     },
   };
 }

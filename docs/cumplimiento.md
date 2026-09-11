@@ -25,8 +25,8 @@ internacional, que pasa a depender de instrumentos contractuales propios.
 | Divulgación de que es IA | Circular SERNAC 33/2022 | La primera línea del guion lo declara, antes de cualquier contenido clínico | — |
 | Consentimiento de grabación | Código Penal art. 161-A | El aviso va en la apertura. Si el paciente lo rechaza, la llamada continúa sin grabar: el consentimiento de grabación es separable del de la llamada | Configurar la no grabación efectiva en la plataforma |
 | Registro en ficha | Ley 20.584 art. 12 | Resultado estructurado y traza completa disponibles por API | Integración con la ficha clínica |
-| Numeración 600 | Res. Ex. SUBTEL 1319/2026 | — | Confirmar con SUBTEL y configurar el trunk |
-| Conservación de audio | Art. 14 ter i) | Este servicio no almacena audio; descarta el evento de audio explícitamente | Definir, justificar y publicar el plazo |
+| Numeración 600 | Res. Ex. SUBTEL 1319/2026 | Grupo de números de salida administrable: el número presentado se cambia sin tocar código | Confirmar con SUBTEL si corresponde y si puede presentarse vía Twilio. Ver [`telefonia.md`](telefonia.md) |
+| Conservación de audio | Art. 14 ter i) | Este servicio no almacena audio; descarta el evento de audio explícitamente y pide a Twilio no grabar en cada llamada | Definir, justificar y publicar el plazo |
 
 ## La línea que no se cruza
 

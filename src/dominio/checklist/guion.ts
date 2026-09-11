@@ -7,9 +7,17 @@
  * alucinación clínica y es lo que permite calificar la llamada como ejecución
  * de una indicación ya emitida y no como consejo clínico nuevo.
  */
-import type { ContextoLlamada } from '../tipos.js';
+import { MOTIVOS_ENRUTAMIENTO, type ContextoLlamada, type MotivoEnrutamiento } from '../tipos.js';
 
 const NOMBRE_INSTITUCION = 'Fundación Arturo López Pérez';
+
+/** Motivo de transferencia tal como lo oye el operador. Sin datos del paciente. */
+const MOTIVO_LEGIBLE: Record<MotivoEnrutamiento, string> = {
+  alarma: 'el paciente reportó un síntoma de alarma',
+  consulta: 'el paciente necesita hablar con una persona',
+  incomprension: 'el paciente no logró confirmar una indicación',
+  fuera_de_guion: 'falla de validación del guion',
+};
 
 /** Convierte "07:30" en "siete y media de la mañana" no es necesario: la capa de
  *  voz normaliza. Se entrega la hora tal cual está en la ficha. */
@@ -136,6 +144,26 @@ export const guion = {
     );
   },
 
+  /**
+   * Lo que oye el paciente mientras la plataforma conecta con la persona. Viaja
+   * como `client_message` de la herramienta de transferencia.
+   */
+  esperaTransferencia(): string {
+    return 'Un momento, por favor.';
+  },
+
+  /**
+   * Aviso al operador que recibe la transferencia (`agent_message`). No lleva el
+   * nombre del paciente ni contenido clínico: solo el motivo y un código para
+   * ubicar la traza en la auditoría.
+   */
+  avisoOperador(motivo: MotivoEnrutamiento, idLlamada: string): string {
+    return (
+      `Transferencia del asistente de preparación de ${NOMBRE_INSTITUCION}. ` +
+      `Motivo: ${MOTIVO_LEGIBLE[motivo]}. Código de llamada ${idLlamada}.`
+    );
+  },
+
   noEsBuenMomento(): string {
     return 'Entiendo. Lo llamamos en otro momento. Que esté bien.';
   },
@@ -178,6 +206,7 @@ export function todasLasLineas(c: ContextoLlamada): string[] {
     guion.transferenciaIncomprension(),
     guion.transferenciaSolicitada(),
     guion.transferenciaFallida(),
+    guion.esperaTransferencia(),
     guion.noEsBuenMomento(),
     guion.rechazoGrabacion(),
     guion.noEscucho(),
@@ -185,5 +214,6 @@ export function todasLasLineas(c: ContextoLlamada): string[] {
   for (let i = 0; i < c.indicacion.farmacosASuspender.length; i++) {
     lineas.push(guion.farmaco(c, i), guion.farmacoNoConfirmado(c, i));
   }
+  for (const m of MOTIVOS_ENRUTAMIENTO) lineas.push(guion.avisoOperador(m, c.idLlamada));
   return lineas.filter((l) => l.length > 0);
 }

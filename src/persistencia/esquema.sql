@@ -15,6 +15,7 @@ CREATE TABLE IF NOT EXISTS trabajos (
   intentos           INTEGER NOT NULL DEFAULT 0,
   programado_para    TEXT NOT NULL,
   id_conversacion    TEXT,                   -- devuelto por la plataforma al despachar
+  numero_salida      TEXT,                   -- número de salida con que se originó
   creado_en          TEXT NOT NULL,
   actualizado_en     TEXT NOT NULL
 );
@@ -74,5 +75,37 @@ CREATE TABLE IF NOT EXISTS sesiones (
   id_conversacion    TEXT PRIMARY KEY,
   estado_json        TEXT NOT NULL,
   contexto_json      TEXT NOT NULL,
+  actualizado_en     TEXT NOT NULL
+);
+
+-- Números de salida. Cada fila es un número importado en la plataforma de voz
+-- (Twilio nativo o SIP). El despachador reparte las llamadas entre los activos.
+-- Un número nuevo entra inactivo: activarlo es una decisión explícita.
+CREATE TABLE IF NOT EXISTS numeros_salida (
+  id_plataforma      TEXT PRIMARY KEY,                 -- phone_number_id en ElevenLabs
+  e164               TEXT NOT NULL DEFAULT '',
+  etiqueta           TEXT NOT NULL DEFAULT '',
+  proveedor          TEXT NOT NULL DEFAULT 'twilio',   -- twilio | sip_trunk
+  activo             INTEGER NOT NULL DEFAULT 0,
+  concurrencia_max   INTEGER NOT NULL DEFAULT 5,       -- llamadas simultáneas por número
+  prioridad          INTEGER NOT NULL DEFAULT 100,     -- menor gana a igual ocupación
+  creado_en          TEXT NOT NULL,
+  actualizado_en     TEXT NOT NULL
+);
+
+-- Destinos de transferencia a persona, por motivo, servicio y horario.
+-- Si ninguno aplica se usa NUMERO_TRANSFERENCIA, que en producción siempre existe.
+CREATE TABLE IF NOT EXISTS destinos_transferencia (
+  id                 TEXT PRIMARY KEY,
+  e164               TEXT NOT NULL,
+  etiqueta           TEXT NOT NULL DEFAULT '',
+  motivo             TEXT NOT NULL,                    -- alarma | consulta | incomprension | fuera_de_guion | general
+  servicio           TEXT NOT NULL DEFAULT '',         -- vacío: cualquier servicio
+  hora_desde         INTEGER NOT NULL DEFAULT 0,       -- hora de Chile, inclusiva
+  hora_hasta         INTEGER NOT NULL DEFAULT 24,      -- hora de Chile, exclusiva
+  dias               TEXT NOT NULL DEFAULT '1234567',  -- 1 lunes … 7 domingo
+  prioridad          INTEGER NOT NULL DEFAULT 100,
+  activo             INTEGER NOT NULL DEFAULT 1,
+  creado_en          TEXT NOT NULL,
   actualizado_en     TEXT NOT NULL
 );

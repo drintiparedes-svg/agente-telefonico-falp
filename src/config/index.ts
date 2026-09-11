@@ -22,13 +22,41 @@ const Esquema = z.object({
   ANTHROPIC_API_KEY: z.string().optional(),
   ANTHROPIC_MODELO: z.string().default('claude-haiku-4-5'),
 
-  /** Credenciales de la plataforma de voz. Solo para despacho de llamadas salientes. */
+  /**
+   * Credenciales de la plataforma de voz. Con clave y agente se usa la plataforma
+   * real. ELEVENLABS_PHONE_NUMBER_ID es opcional: siembra un número activo al
+   * arrancar; en producción el grupo de números se administra en /admin/numeros.
+   */
   ELEVENLABS_API_KEY: z.string().optional(),
   ELEVENLABS_AGENT_ID: z.string().optional(),
   ELEVENLABS_PHONE_NUMBER_ID: z.string().optional(),
   ELEVENLABS_BASE_URL: z.string().default('https://api.elevenlabs.io'),
 
-  /** Número al que se transfieren las llamadas que requieren una persona. */
+  /**
+   * Proveedor con que se importó ELEVENLABS_PHONE_NUMBER_ID. `twilio` es la
+   * integración nativa, la única con aviso al operador al transferir.
+   */
+  TELEFONIA_PROVEEDOR: z.enum(['twilio', 'sip_trunk']).default('twilio'),
+
+  /**
+   * Llamadas por segundo que admite la cuenta de Twilio. Twilio parte en 1 y,
+   * con perfil de negocio aprobado, permite subirlo a 5 desde su consola.
+   */
+  TWILIO_CPS: z.coerce.number().positive().max(100).default(1),
+
+  /** Techo de llamadas simultáneas con que entra un número recién sincronizado. */
+  CONCURRENCIA_POR_NUMERO: z.coerce.number().int().positive().default(5),
+
+  /** `conference` permite avisar al operador; `blind` conserva el caller ID y no avisa. */
+  TRANSFERENCIA_TIPO: z.enum(['conference', 'blind']).default('conference'),
+
+  /** Token de los endpoints /admin/*. Sin él, esos endpoints no existen. */
+  ADMIN_TOKEN: z.preprocess((v) => (v === '' ? undefined : v), z.string().min(16).optional()),
+
+  /**
+   * Número de respaldo para transferir a una persona cuando ningún destino de
+   * /admin/destinos aplica. En producción es obligatorio.
+   */
   NUMERO_TRANSFERENCIA: z.string().default(''),
 
   /**
