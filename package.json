@@ -5,9 +5,11 @@
   "description": "Agente telefónico de preparación pre-procedimiento — Fundación Arturo López Pérez. Núcleo cognitivo propio; ElevenLabs opera solo como capa de voz y telefonía.",
   "license": "UNLICENSED",
   "type": "module",
-  "engines": { "node": ">=20" },
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json && cp src/persistencia/esquema.sql dist/src/persistencia/",
     "dev": "tsx watch src/index.ts",
     "start": "node dist/index.js",
     "test": "vitest run",

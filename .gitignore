@@ -9,3 +9,4 @@ datos/
 *.log
 .DS_Store
 coverage/
+.vercel/

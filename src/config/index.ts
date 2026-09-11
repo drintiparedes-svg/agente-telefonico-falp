@@ -41,6 +41,13 @@ const Esquema = z.object({
   RETENCION_AUDIO_DIAS: z.coerce.number().int().nonnegative().default(0),
 
   NIVEL_LOG: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace']).default('info'),
+
+  /**
+   * Secreto para los endpoints de tareas (`/tareas/*`). Solo hace falta cuando el
+   * servicio corre en una plataforma sin procesos persistentes (Vercel) y las
+   * tareas de fondo se disparan por cron HTTP. Vacío: los endpoints no existen.
+   */
+  CRON_SECRET: z.string().optional(),
 });
 
 export type Config = z.infer<typeof Esquema>;

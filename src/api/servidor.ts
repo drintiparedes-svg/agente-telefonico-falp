@@ -93,6 +93,29 @@ export function construirServicio(cfg: Config, clienteVoz?: ClienteVoz): Servici
 
   app.get('/conciliacion', async () => conciliar({ trabajos, resultados, log }));
 
+  // Tareas de fondo como endpoints. En un proceso persistente las dispara
+  // `src/index.ts` con temporizadores; en una plataforma serverless las dispara
+  // un cron HTTP. Solo existen si hay CRON_SECRET, y exigen ese secreto.
+  if (cfg.CRON_SECRET) {
+    const secreto = cfg.CRON_SECRET;
+    app.get('/tareas/:tarea', async (req, reply) => {
+      if (req.headers.authorization !== `Bearer ${secreto}`) {
+        return reply.code(401).send({ error: 'No autorizado' });
+      }
+      const { tarea } = req.params as { tarea: string };
+      switch (tarea) {
+        case 'cola':
+          return trabajador.procesarLote();
+        case 'despacho':
+          return despachador.despacharLote();
+        case 'conciliacion':
+          return conciliar({ trabajos, resultados, log });
+        default:
+          return reply.code(404).send({ error: 'Tarea desconocida' });
+      }
+    });
+  }
+
   return {
     app,
     db,

@@ -207,3 +207,43 @@ describe('Conciliación', () => {
     expect(ahora.totalSinResultado).toBe(0);
   });
 });
+
+describe('Endpoints de tareas (cron HTTP)', () => {
+  it('no existen si no hay CRON_SECRET', async () => {
+    const r = await svc.app.inject({ method: 'GET', url: '/tareas/cola' });
+    expect(r.statusCode).toBe(404);
+  });
+
+  it('con CRON_SECRET exigen el secreto y ejecutan la tarea', async () => {
+    await svc.cerrar();
+    _limpiarCacheConfig();
+    const cfg = cargarConfig({
+      NODE_ENV: 'test',
+      DB_RUTA: ':memory:',
+      WEBHOOK_SECRETO: SECRETO,
+      LLM_TOKEN: TOKEN,
+      NUMERO_TRANSFERENCIA: '+56000000000',
+      NIVEL_LOG: 'fatal',
+      CRON_SECRET: 'secreto-cron',
+    } as NodeJS.ProcessEnv);
+    svc = construirServicio(cfg, cliente);
+
+    const sinAuth = await svc.app.inject({ method: 'GET', url: '/tareas/cola' });
+    expect(sinAuth.statusCode).toBe(401);
+
+    const cola = await svc.app.inject({
+      method: 'GET',
+      url: '/tareas/cola',
+      headers: { authorization: 'Bearer secreto-cron' },
+    });
+    expect(cola.statusCode).toBe(200);
+    expect(cola.json()).toEqual({ procesados: 0, errores: 0 });
+
+    const desconocida = await svc.app.inject({
+      method: 'GET',
+      url: '/tareas/otra',
+      headers: { authorization: 'Bearer secreto-cron' },
+    });
+    expect(desconocida.statusCode).toBe(404);
+  });
+});

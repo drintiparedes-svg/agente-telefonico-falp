@@ -1,0 +1,32 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": null,
+  "buildCommand": "npm run build",
+  "installCommand": "npm ci",
+  "functions": {
+    "api/index.js": {
+      "includeFiles": "dist/**",
+      "maxDuration": 30
+    }
+  },
+  "rewrites": [
+    {
+      "source": "/(.*)",
+      "destination": "/api/index"
+    }
+  ],
+  "crons": [
+    {
+      "path": "/tareas/cola",
+      "schedule": "0 12 * * *"
+    },
+    {
+      "path": "/tareas/despacho",
+      "schedule": "0 13 * * *"
+    },
+    {
+      "path": "/tareas/conciliacion",
+      "schedule": "0 14 * * *"
+    }
+  ]
+}

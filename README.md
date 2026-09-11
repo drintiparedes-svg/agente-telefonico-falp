@@ -142,6 +142,14 @@ conciliación, auditoría y simulador.
 Ver [`docs/cumplimiento.md`](docs/cumplimiento.md) para el detalle de lo que la
 normativa exige y qué parte de eso resuelve este código.
 
+### Despliegue en Vercel
+
+Hay un adaptador serverless en `api/index.js` y configuración en `vercel.json`.
+Sirve como **superficie pública de prueba**: la base SQLite vive en `/tmp` y es
+efímera, y las tareas de fondo se disparan por cron HTTP o a mano en
+`/tareas/*`. No es un entorno apto para pacientes. Detalle y pasos en
+[`docs/despliegue-vercel.md`](docs/despliegue-vercel.md).
+
 ---
 
 ## Advertencia
