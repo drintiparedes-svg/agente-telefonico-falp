@@ -65,9 +65,10 @@ Están implementados como código y cubiertos por pruebas con umbral del 100 %.
 
 ```bash
 npm install
-npm test                  # 47 pruebas, sin red
+npm test                  # 93 pruebas, sin red
 npm run simular -- alarma # recorre un escenario completo en consola
 npm run dev               # servicio en :8080
+npm run aprovisionar      # crea o reescribe el agente en la plataforma de voz
 ```
 
 El servicio arranca sin credenciales: usa un clasificador determinista por reglas
@@ -103,7 +104,9 @@ repite    el paciente pide repetir la indicación
 | `PATCH` | `/admin/numeros/:id` | Activa, desactiva o cambia el techo de un número |
 | `GET` | `/admin/destinos` | Destinos de transferencia y número de respaldo |
 | `PUT` | `/admin/destinos/:id` | Crea o cambia un destino por motivo, servicio y horario |
-| `POST` | `/admin/agente/sincronizar` | Escribe los destinos en las reglas de transferencia del agente |
+| `GET` | `/admin/agente` | Compara el agente de la plataforma con la definición de este servicio. Lista cambios manuales |
+| `POST` | `/admin/agente/sincronizar` | Reescribe la definición completa del agente: LLM propio, voz, privacidad, herramientas y reglas |
+| `POST` | `/admin/agente/sincronizar-destinos` | Solo las reglas de transferencia. Más barato tras cambiar un destino |
 
 ---
 
@@ -121,7 +124,8 @@ src/
   llm/
     clasificador.ts  Único punto donde interviene un modelo. Solo clasifica.
     servidor.ts      Endpoint compatible OpenAI con SSE.
-  telefonia/         Cliente de voz, grupo de números, despachador y transferencias.
+  telefonia/         Cliente de voz, definición del agente, grupo de números,
+                     despachador y transferencias.
   webhooks/          Recepción firmada y cola durable.
   persistencia/      SQLite con WAL. Repositorios aislados del dominio.
   conciliacion/      Cuenta llamadas originadas contra resultados recibidos.
@@ -149,12 +153,18 @@ conciliación, auditoría y simulador.
 Ver [`docs/cumplimiento.md`](docs/cumplimiento.md) para el detalle de lo que la
 normativa exige y qué parte de eso resuelve este código.
 
-### Telefonía
+### Telefonía y voz
 
 Las llamadas salen por la integración nativa de Twilio con ElevenLabs. Los
 números de salida son un grupo administrable, y las transferencias se enrutan por
-motivo, servicio y horario. Hoy no hay ningún número real configurado. Qué falta,
-cómo escala y cómo se pone en marcha: [`docs/telefonia.md`](docs/telefonia.md).
+motivo, servicio y horario. Hoy no hay ningún número real configurado.
+
+El agente de la plataforma **lo define este servicio**, no el panel: LLM propio
+apuntando a `/v1/chat/completions`, sin personalidad por defecto, sin
+herramientas ajenas, sin grabación y con retención cero. `npm run aprovisionar`
+lo crea o lo reescribe, y `GET /admin/agente` lista cualquier cambio manual.
+Qué falta, cómo escala y cómo se pone en marcha:
+[`docs/telefonia.md`](docs/telefonia.md).
 
 ### Despliegue en Vercel
 

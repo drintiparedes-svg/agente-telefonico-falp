@@ -18,7 +18,65 @@ import { crearTrabajadorCola, registrarWebhooks } from '../webhooks/receptor.js'
 import { ClienteElevenLabs, ClienteVozSimulado, type ClienteVoz } from '../telefonia/elevenlabs.js';
 import { crearDespachador, MARGEN_EN_CURSO_MIN } from '../telefonia/despachador.js';
 import { reglasParaAgente, resolverDestino } from '../telefonia/transferencias.js';
+import { compararAgente, cuerpoAgente, type DefinicionAgente } from '../telefonia/agente.js';
 import { conciliar } from '../conciliacion/conciliar.js';
+
+export const NOMBRE_AGENTE = 'FALP · Preparación pre-procedimiento';
+
+/** Variables sin las cuales no se puede escribir la definición del agente. */
+export function faltantesParaAgente(cfg: Config): string[] {
+  const faltan: string[] = [];
+  if (!cfg.SERVICIO_URL_PUBLICA) faltan.push('SERVICIO_URL_PUBLICA');
+  if (!cfg.ELEVENLABS_VOICE_ID) faltan.push('ELEVENLABS_VOICE_ID');
+  return faltan;
+}
+
+/** Definición del agente a partir de la configuración y de los destinos vigentes. */
+export function definicionAgente(
+  cfg: Config,
+  p: { secretIdLlm: string; reglas: DefinicionAgente['reglas']; webhookPostLlamadaId?: string | null },
+): DefinicionAgente {
+  return {
+    nombre: NOMBRE_AGENTE,
+    urlPublica: cfg.SERVICIO_URL_PUBLICA ?? '',
+    secretIdLlm: p.secretIdLlm,
+    voiceId: cfg.ELEVENLABS_VOICE_ID ?? '',
+    ttsModelo: cfg.ELEVENLABS_TTS_MODELO,
+    idioma: cfg.ELEVENLABS_IDIOMA,
+    retencionCero: cfg.ELEVENLABS_RETENCION_CERO,
+    retencionDias: cfg.RETENCION_AUDIO_DIAS,
+    webhookPostLlamadaId: p.webhookPostLlamadaId ?? cfg.ELEVENLABS_POSTCALL_WEBHOOK_ID ?? null,
+    reglas: p.reglas,
+  };
+}
+
+/**
+ * Escribe la definición completa del agente en la plataforma: secreto del token,
+ * LLM propio, voz, idioma, privacidad, herramientas y reglas de transferencia.
+ * Es la única vía sancionada para cambiar el agente; el panel es solo lectura.
+ */
+export async function sincronizarAgente(
+  cfg: Config,
+  cliente: ClienteVoz,
+  reglas: DefinicionAgente['reglas'],
+): Promise<
+  | { ok: true; reglas: number; secretoCreado: boolean; discrepanciasPrevias: ReturnType<typeof compararAgente> }
+  | { ok: false; error: string; faltan?: string[] }
+> {
+  const faltan = faltantesParaAgente(cfg);
+  if (faltan.length > 0) return { ok: false, error: `Faltan variables para definir el agente: ${faltan.join(', ')}`, faltan };
+
+  const secreto = await cliente.asegurarSecreto(cfg.ELEVENLABS_SECRETO_LLM_NOMBRE, cfg.LLM_TOKEN);
+  if (!secreto.ok) return { ok: false, error: `No se pudo escribir el secreto del token: ${secreto.error}` };
+
+  const definicion = definicionAgente(cfg, { secretIdLlm: secreto.secretId, reglas });
+  const previo = await cliente.leerAgente();
+  const discrepanciasPrevias = previo.ok ? compararAgente(definicion, previo.datos) : [];
+
+  const r = await cliente.escribirAgente(cuerpoAgente(definicion));
+  if (!r.ok) return { ok: false, error: r.error };
+  return { ok: true, reglas: reglas.length, secretoCreado: secreto.creado, discrepanciasPrevias };
+}
 
 export interface Servicio {
   app: FastifyInstance;
@@ -252,7 +310,35 @@ export function construirServicio(cfg: Config, clienteVoz?: ClienteVoz, opciones
           return { ok: true, id, aviso: 'Sincronice el agente para que la plataforma acepte este destino.' };
         });
 
+        // Estado del agente en la plataforma frente a la definición de este
+        // servicio. Una discrepancia es un cambio hecho a mano en el panel.
+        admin.get('/agente', async (_req, reply) => {
+          const faltan = faltantesParaAgente(cfg);
+          if (faltan.length > 0) return reply.code(422).send({ error: 'Definición incompleta', faltan });
+          const reglas = reglasParaAgente(destinos.activos(), cfg.NUMERO_TRANSFERENCIA, cfg.TRANSFERENCIA_TIPO);
+          const actual = await cliente.leerAgente();
+          if (!actual.ok) return reply.code(502).send({ error: actual.error });
+          if (actual.datos === null) return { agentId: cfg.ELEVENLABS_AGENT_ID ?? null, existe: false, discrepancias: [] };
+          // El secreto no se compara: la plataforma no devuelve su valor.
+          const discrepancias = compararAgente(definicionAgente(cfg, { secretIdLlm: '', reglas }), actual.datos);
+          return {
+            agentId: (actual.datos as Record<string, unknown>)['agent_id'] ?? cfg.ELEVENLABS_AGENT_ID ?? null,
+            existe: true,
+            sincronizado: discrepancias.length === 0,
+            discrepancias,
+          };
+        });
+
+        // Reescribe la definición completa. Reemplaza cualquier cambio manual.
         admin.post('/agente/sincronizar', async (_req, reply) => {
+          const reglas = reglasParaAgente(destinos.activos(), cfg.NUMERO_TRANSFERENCIA, cfg.TRANSFERENCIA_TIPO);
+          const r = await sincronizarAgente(cfg, cliente, reglas);
+          if (r.ok) return r;
+          return reply.code(r.faltan ? 422 : 502).send(r);
+        });
+
+        // Solo las reglas de transferencia. Más barato tras cambiar un destino.
+        admin.post('/agente/sincronizar-destinos', async (_req, reply) => {
           const reglas = reglasParaAgente(destinos.activos(), cfg.NUMERO_TRANSFERENCIA, cfg.TRANSFERENCIA_TIPO);
           const r = await cliente.actualizarReglasTransferencia(reglas);
           return r.ok ? { ok: true, reglas: reglas.length } : reply.code(502).send({ ok: false, error: r.error });

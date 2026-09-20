@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { MODELOS_TTS } from '../telefonia/agente.js';
 
 const Esquema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
@@ -31,6 +32,34 @@ const Esquema = z.object({
   ELEVENLABS_AGENT_ID: z.string().optional(),
   ELEVENLABS_PHONE_NUMBER_ID: z.string().optional(),
   ELEVENLABS_BASE_URL: z.string().default('https://api.elevenlabs.io'),
+
+  /**
+   * Definición del agente en la plataforma. Con estos valores el servicio
+   * escribe la configuración completa del agente (LLM propio, voz, idioma,
+   * privacidad, herramientas) y detecta cambios hechos a mano en el panel.
+   */
+  /** URL pública de este servicio, sin barra final. La plataforma llama a `<URL>/v1/chat/completions`. */
+  SERVICIO_URL_PUBLICA: z.preprocess(
+    (v) => (v === '' ? undefined : v),
+    z.string().url().refine((u) => u.startsWith('https://'), 'Debe ser https').optional(),
+  ),
+  /** Voz seleccionada y validada con el equipo. Sin ella no se sincroniza el agente. */
+  ELEVENLABS_VOICE_ID: z.preprocess((v) => (v === '' ? undefined : v), z.string().min(1).optional()),
+  ELEVENLABS_TTS_MODELO: z.enum(MODELOS_TTS).default('eleven_flash_v2_5'),
+  ELEVENLABS_IDIOMA: z.string().regex(/^[a-z]{2}$/).default('es'),
+  /** Nombre del secreto del workspace que guarda LLM_TOKEN. */
+  ELEVENLABS_SECRETO_LLM_NOMBRE: z.string().min(1).default('agente-falp-llm-token'),
+  /** Webhook post-llamada creado en la plataforma. Lo crea `npm run aprovisionar`. */
+  ELEVENLABS_POSTCALL_WEBHOOK_ID: z.preprocess((v) => (v === '' ? undefined : v), z.string().min(1).optional()),
+  /**
+   * Retención cero en la plataforma. Es condición para tratar datos de pacientes
+   * reales y requiere plan Enterprise; en un workspace sin ese plan la
+   * sincronización falla. `false` solo para desarrollo y demostraciones.
+   */
+  ELEVENLABS_RETENCION_CERO: z
+    .preprocess((v) => (typeof v === 'string' ? v.trim().toLowerCase() : v), z.enum(['true', 'false', '1', '0']))
+    .transform((v) => v === 'true' || v === '1')
+    .default('true'),
 
   /**
    * Proveedor con que se importó ELEVENLABS_PHONE_NUMBER_ID. `twilio` es la
@@ -98,6 +127,14 @@ export function cargarConfig(env: NodeJS.ProcessEnv = process.env): Config {
       throw new Error(
         `No se puede arrancar en producción con estos valores sin definir: ${problemas.join(', ')}. ` +
           'Un agente clínico sin ruta de transferencia a persona no debe operar.',
+      );
+    }
+    // Con plataforma real, la retención cero no es opcional: es la condición bajo
+    // la cual el análisis de factibilidad admite tratar datos de pacientes.
+    if (r.data.ELEVENLABS_API_KEY && !r.data.ELEVENLABS_RETENCION_CERO) {
+      throw new Error(
+        'ELEVENLABS_RETENCION_CERO=false no es admisible en producción con una plataforma real. ' +
+          'Sin retención cero no se pueden tratar datos de pacientes.',
       );
     }
   }

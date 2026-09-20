@@ -247,9 +247,18 @@ describe('Administración de telefonía', () => {
     const bueno = await svc.app.inject({ method: 'PUT', url: '/admin/destinos/uci', headers, payload: { e164: '+56922223333', motivo: 'alarma' } });
     expect(bueno.statusCode).toBe(200);
 
-    const sync = await svc.app.inject({ method: 'POST', url: '/admin/agente/sincronizar', headers });
+    const sync = await svc.app.inject({ method: 'POST', url: '/admin/agente/sincronizar-destinos', headers });
     expect(sync.json()).toEqual({ ok: true, reglas: 2 });
     expect(cliente.reglas?.map((r) => r.transfer_destination.phone_number).sort()).toEqual([RESPALDO, '+56922223333'].sort());
+  });
+
+  it('la sincronización completa exige URL pública y voz', async () => {
+    const { svc } = levantar({ ADMIN_TOKEN: ADMIN });
+    const headers = { authorization: `Bearer ${ADMIN}` };
+    const r = await svc.app.inject({ method: 'POST', url: '/admin/agente/sincronizar', headers });
+    expect(r.statusCode).toBe(422);
+    expect(r.json().faltan).toEqual(['SERVICIO_URL_PUBLICA', 'ELEVENLABS_VOICE_ID']);
+    expect((await svc.app.inject({ method: 'GET', url: '/admin/agente', headers })).statusCode).toBe(422);
   });
 });
 
