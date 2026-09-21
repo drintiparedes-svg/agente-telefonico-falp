@@ -65,7 +65,7 @@ Están implementados como código y cubiertos por pruebas con umbral del 100 %.
 
 ```bash
 npm install
-npm test                  # 98 pruebas, sin red
+npm test                  # 99 pruebas, sin red
 npm run simular -- alarma # recorre un escenario completo en consola
 npm run dev               # servicio en :8080
 npm run aprovisionar      # crea o reescribe el agente en la plataforma de voz

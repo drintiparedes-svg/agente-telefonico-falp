@@ -11,6 +11,13 @@ import { MOTIVOS_ENRUTAMIENTO, type ContextoLlamada, type MotivoEnrutamiento } f
 
 const NOMBRE_INSTITUCION = 'Fundación Arturo López Pérez';
 
+/**
+ * Nombre con que el agente se presenta. Es el mismo que lleva el agente en la
+ * plataforma de voz («Catalina AI»); cambiarlo aquí es cambiar el guion, y por
+ * tanto pasa por revisión clínica. Aprobado por la gerencia el 2026-09-21.
+ */
+export const NOMBRE_AGENTE_VOZ = 'Catalina';
+
 /** Motivo de transferencia tal como lo oye el operador. Sin datos del paciente. */
 const MOTIVO_LEGIBLE: Record<MotivoEnrutamiento, string> = {
   alarma: 'el paciente reportó un síntoma de alarma',
@@ -27,12 +34,14 @@ function hora(h: string): string {
 
 export const guion = {
   /**
-   * Apertura. Divulgación de que es un sistema automatizado y aviso de grabación
-   * ANTES de cualquier contenido clínico, y antes incluso de pedir identidad.
+   * Apertura. El agente se presenta por su nombre y declara que es un sistema
+   * automatizado, con aviso de grabación, ANTES de cualquier contenido clínico y
+   * antes incluso de pedir identidad. El nombre no atenúa la divulgación: la
+   * palabra «automatizada» va en la misma frase.
    */
   apertura(c: ContextoLlamada): string {
     return (
-      `Buenos días, le llama el asistente telefónico automatizado de ${NOMBRE_INSTITUCION}. ` +
+      `Buenos días, soy ${NOMBRE_AGENTE_VOZ}, la asistente telefónica automatizada de ${NOMBRE_INSTITUCION}. ` +
       `Esta llamada es grabada. En cualquier momento puede pedir hablar con una persona del equipo. ` +
       `¿Hablo con ${c.verificacion.nombrePaciente}?`
     );

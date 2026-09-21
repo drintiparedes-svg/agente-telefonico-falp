@@ -416,7 +416,7 @@ describe('Primer turno de una llamada saliente', () => {
     const { svc, cliente } = levantar();
     const { idConv, turno } = await iniciar(svc, cliente);
     const r = await turno([{ role: 'user', content: '¿Aló? ¿Quién habla?' }], { 'x-conversation-id': idConv });
-    expect(r.body).toMatch(/asistente telefónico automatizado/);
+    expect(r.body).toMatch(/soy Catalina, la asistente telefónica automatizada/);
     expect(r.body).not.toContain('tool_calls');
 
     // El siguiente turno ya es una respuesta al guion.
@@ -442,7 +442,7 @@ describe('Primer turno de una llamada saliente', () => {
     const { idConv, turno } = await iniciar(svc, cliente);
     const sistema = promptSistema().replace('{{system__conversation_id}}', idConv);
     const r = await turno([{ role: 'system', content: sistema }, { role: 'user', content: 'aló' }]);
-    expect(r.body).toMatch(/asistente telefónico automatizado/);
+    expect(r.body).toMatch(/soy Catalina, la asistente telefónica automatizada/);
     expect(r.body).not.toContain('end_call');
 
     // Con un id que no corresponde a ninguna sesión se corta sin contenido clínico.
@@ -455,6 +455,6 @@ describe('Primer turno de una llamada saliente', () => {
     const { svc, cliente } = levantar();
     const { idConv, turno } = await iniciar(svc, cliente);
     const r = await turno([], { 'x-conversation-id': idConv });
-    expect(r.body).toMatch(/asistente telefónico automatizado/);
+    expect(r.body).toMatch(/soy Catalina, la asistente telefónica automatizada/);
   });
 });
