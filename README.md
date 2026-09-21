@@ -100,10 +100,6 @@ repite    el paciente pide repetir la indicación
 | `GET` | `/auditoria/:idLlamada` | Traza completa de una llamada, transición por transición |
 | `GET` | `/conciliacion` | Llamadas originadas sin resultado recibido |
 | `GET` | `/salud` | Estado del servicio y profundidad de la cola |
-
-Las rutas `/llamadas`, `/auditoria`, `/revision` y `/conciliacion` tratan datos
-de pacientes y exigen `Authorization: Bearer <INTEGRACION_TOKEN>`. En
-producción el servicio no arranca sin ese token.
 | `GET` | `/admin/numeros` | Grupo de números de salida y su ocupación. Requiere `ADMIN_TOKEN` |
 | `POST` | `/admin/numeros/sincronizar` | Lee los números importados en la plataforma. Los nuevos quedan inactivos |
 | `PATCH` | `/admin/numeros/:id` | Activa, desactiva o cambia el techo de un número |
@@ -112,6 +108,10 @@ producción el servicio no arranca sin ese token.
 | `GET` | `/admin/agente` | Compara el agente de la plataforma con la definición de este servicio. Lista cambios manuales |
 | `POST` | `/admin/agente/sincronizar` | Reescribe la definición completa del agente: LLM propio, voz, privacidad, herramientas y reglas |
 | `POST` | `/admin/agente/sincronizar-destinos` | Solo las reglas de transferencia. Más barato tras cambiar un destino |
+
+Las rutas `/llamadas`, `/auditoria`, `/revision` y `/conciliacion` tratan datos
+de pacientes y exigen `Authorization: Bearer <INTEGRACION_TOKEN>`. En
+producción el servicio no arranca sin ese token.
 
 ---
 
