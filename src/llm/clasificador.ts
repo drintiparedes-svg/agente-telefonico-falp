@@ -9,6 +9,7 @@
  */
 import { Clasificacion } from '../dominio/tipos.js';
 import type { Estado } from '../dominio/tipos.js';
+import { extraerNumeros } from '../dominio/checklist/numeros.js';
 
 export interface Clasificador {
   clasificar(entrada: {
@@ -96,8 +97,11 @@ export class ClasificadorSimulado implements Clasificador {
     if (contiene('no entiendo', 'no comprendo', 'como dice', 'cómo dice', 'no se', 'no sé'))
       return Clasificacion.parse({ intencion: 'no_entiende', confianza: 0.85 });
 
-    // Dato numérico o de hora: se devuelve literal, sin normalizar.
-    if (/\d/.test(t)) return Clasificacion.parse({ intencion: 'responde_dato', valorLiteral: e.textoPaciente, confianza: 0.85 });
+    // Dato numérico o de hora, en cifras o en palabras: se devuelve literal,
+    // sin normalizar. Quien lo compara es la máquina.
+    if (/\d/.test(t) || extraerNumeros(t).length > 0) {
+      return Clasificacion.parse({ intencion: 'responde_dato', valorLiteral: e.textoPaciente, confianza: 0.85 });
+    }
 
     if (contiene('no ', 'nop', 'negativo', 'todavia no', 'todavía no') || t === 'no')
       return Clasificacion.parse({ intencion: 'niega', confianza: 0.85 });
