@@ -10,7 +10,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { cargarConfig, _limpiarCacheConfig } from '../src/config/index.js';
 import { construirServicio, esRutaDeIntegracion, type Servicio } from '../src/api/servidor.js';
-import { frasedelResultado, resumirLlamada } from '../src/api/estado-llamada.js';
+import { fraseDelResultado, resumirLlamada } from '../src/api/estado-llamada.js';
 import { ClienteVozSimulado } from '../src/telefonia/elevenlabs.js';
 import { contexto } from './fixtures.js';
 
@@ -196,7 +196,7 @@ describe('Resumen de la llamada', () => {
   });
 
   it('la frase del resultado nombra los criterios no cumplidos de una llamada completa', () => {
-    const frase = frasedelResultado({
+    const frase = fraseDelResultado({
       estadoFinal: 'terminada_ok',
       requiereRevisionHumana: true,
       criterios: [

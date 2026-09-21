@@ -10,8 +10,10 @@
  * Todo es determinista y sin modelo: es parte del piso que no se mueve.
  */
 
+// «un» y «una» no están: son artículos («un momento», «una consulta») mucho más
+// a menudo que números, y colarlos como 1 rompe un RUT dicho después.
 const UNIDADES: Record<string, number> = {
-  cero: 0, un: 1, uno: 1, una: 1, dos: 2, tres: 3, cuatro: 4, cinco: 5, seis: 6, siete: 7, ocho: 8, nueve: 9,
+  cero: 0, uno: 1, dos: 2, tres: 3, cuatro: 4, cinco: 5, seis: 6, siete: 7, ocho: 8, nueve: 9,
   diez: 10, once: 11, doce: 12, trece: 13, catorce: 14, quince: 15, dieciseis: 16, diecisiete: 17,
   dieciocho: 18, diecinueve: 19, veinte: 20, veintiun: 21, veintiuno: 21, veintiuna: 21, veintidos: 22,
   veintitres: 23, veinticuatro: 24, veinticinco: 25, veintiseis: 26, veintisiete: 27, veintiocho: 28,
@@ -110,12 +112,16 @@ export function digitosDichos(texto: string): string {
   return extraerNumeros(texto).map((n) => String(n)).join('');
 }
 
-/** Compara un factor numérico (últimos dígitos del RUT). Tolerante a cómo se dijo. */
+/**
+ * Compara un factor numérico (últimos dígitos del RUT). Tolerante a cómo se
+ * dijo. Se pide «los últimos cuatro», así que si el paciente dice el RUT
+ * entero, o antepone otro número («los últimos cuatro: cuatro ocho dos uno»),
+ * vale con que los dígitos dichos terminen en los esperados.
+ */
 export function coincideDigitos(dicho: string, esperado: string): boolean {
   const meta = esperado.replace(/\D/g, '');
   if (meta === '') return false;
-  const crudo = dicho.replace(/\D/g, '');
-  return crudo === meta || digitosDichos(dicho) === meta;
+  return [dicho.replace(/\D/g, ''), digitosDichos(dicho)].some((d) => d.length >= meta.length && d.endsWith(meta));
 }
 
 /**
@@ -133,7 +139,8 @@ export function coincideDiaMes(dicho: string, esperado: string): boolean {
     const s = String(numeros[0]).padStart(4, '0');
     return Number(s.slice(0, 2)) === dia && Number(s.slice(2)) === mes;
   }
-  return numeros.length >= 2 && numeros[0] === dia && numeros[1] === mes;
+  // El par día-mes puede venir precedido de otro número («el día quince del cuatro»).
+  return numeros.some((n, i) => n === dia && numeros[i + 1] === mes);
 }
 
 const PERIODO_TARDE = /\b(de la tarde|de la noche|pm|p\.m\.)\b/;

@@ -32,6 +32,9 @@ describe('Extracción de números', () => {
     expect(extraerNumeros('diez y veinte')).toEqual([10, 20]);
     expect(extraerNumeros('sí, soy yo')).toEqual([]);
     expect(extraerNumeros('alguno de ninguno')).toEqual([]);
+    // Artículos, no números.
+    expect(extraerNumeros('un momento, una consulta')).toEqual([]);
+    expect(extraerNumeros('veintiún, veintiuna')).toEqual([21, 21]);
   });
 
   it('junta los dígitos dichos', () => {
@@ -43,19 +46,23 @@ describe('Extracción de números', () => {
 
 describe('Factores de identidad', () => {
   it('el RUT coincide dicho de cualquier forma, y no coincide si está mal', () => {
-    for (const d of ['4821', '4 8 2 1', 'cuatro ocho dos uno', 'cuarenta y ocho veintiuno', 'el cuatro, ocho, dos, uno', 'son 48 21']) {
+    for (const d of [
+      '4821', '4 8 2 1', 'cuatro ocho dos uno', 'cuarenta y ocho veintiuno', 'el cuatro, ocho, dos, uno', 'son 48 21',
+      // Antepone otro número, o dice el RUT entero: vale con que termine en lo esperado.
+      'los últimos cuatro son cuatro ocho dos uno', 'un momento... cuatro ocho dos uno', '12.344.821', 'doce trescientos cuarenta y cuatro ocho dos uno',
+    ]) {
       expect(coincideDigitos(d, '4821')).toBe(true);
     }
-    for (const d of ['4822', 'cuatro ocho dos dos', 'no me acuerdo', '', 'cuarenta y ocho']) {
+    for (const d of ['4822', 'cuatro ocho dos dos', 'no me acuerdo', '', 'cuarenta y ocho', '821', 'cuatro ocho dos uno cinco']) {
       expect(coincideDigitos(d, '4821')).toBe(false);
     }
   });
 
   it('el día y mes coinciden en cifras, palabras o nombre de mes', () => {
-    for (const d of ['15-04', '15 04', '15/4', '1504', 'quince del cuatro', 'quince de abril', 'el 15 de abril', 'quince cuatro']) {
+    for (const d of ['15-04', '15 04', '15/4', '1504', 'quince del cuatro', 'quince de abril', 'el 15 de abril', 'quince cuatro', 'el día quince del cuatro', 'un quince de abril']) {
       expect(coincideDiaMes(d, '15-04')).toBe(true);
     }
-    for (const d of ['16-04', 'quince de mayo', 'quince', '', 'abril quince']) {
+    for (const d of ['16-04', 'quince de mayo', 'quince', '', 'abril quince', 'el 4 de abril del 15']) {
       expect(coincideDiaMes(d, '15-04')).toBe(false);
     }
   });

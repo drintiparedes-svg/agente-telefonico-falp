@@ -45,7 +45,7 @@ const DESENLACE: Record<string, string> = {
   transferida_incomprension: 'El paciente no logró confirmar una indicación y la llamada pasó a una persona.',
 };
 
-export function frasedelResultado(r: Pick<ResultadoLlamada, 'estadoFinal' | 'criterios' | 'requiereRevisionHumana' | 'datos'>): string {
+export function fraseDelResultado(r: Pick<ResultadoLlamada, 'estadoFinal' | 'criterios' | 'requiereRevisionHumana' | 'datos'>): string {
   const base = DESENLACE[r.estadoFinal] ?? `La llamada terminó en estado ${r.estadoFinal}.`;
   const pendientes = r.criterios.filter((c) => c.veredicto !== 'cumplido').map((c) => c.id.replace(/_/g, ' '));
   const motivo = (r.datos.motivo_revision ?? '').trim().replace(/\.$/, '');
@@ -66,7 +66,7 @@ export function resumirLlamada(
         motivoRevision: r.datos.motivo_revision,
         criterios: r.criterios,
         datos: r.datos,
-        resumen: frasedelResultado(r),
+        resumen: fraseDelResultado(r),
       }
     : null;
 
