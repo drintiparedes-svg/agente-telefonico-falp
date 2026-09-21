@@ -14,9 +14,11 @@
  */
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
-import { estadoInicial, abrir, avanzar, validarSalida } from '../dominio/checklist/maquina.js';
+import { abrir, avanzar, validarSalida } from '../dominio/checklist/maquina.js';
 import { evaluar } from '../dominio/criterios/index.js';
+import { detectarBanderaRoja } from '../dominio/guardrails/index.js';
 import { ContextoLlamada, type MotivoEnrutamiento } from '../dominio/tipos.js';
+import { extraerIdConversacionDelPrompt } from '../telefonia/agente.js';
 import { argumentosTransferencia, motivoDesdeEstado } from '../telefonia/transferencias.js';
 import type { Clasificador } from './clasificador.js';
 import type { crearRepoAuditoria, crearRepoResultados, crearRepoSesiones } from '../persistencia/repositorios.js';
@@ -59,18 +61,22 @@ export function registrarEndpointLLM(app: FastifyInstance, deps: DepsLLM): void 
     }
     const p = parsed.data;
 
-    const idConversacion = resolverIdConversacion(req, p);
-    if (!idConversacion) {
+    const candidatos = candidatosIdConversacion(req, p);
+    if (candidatos.length === 0) {
       return reply.code(400).send({
         error: { message: 'Falta el identificador de conversación', type: 'invalid_request_error' },
       });
     }
 
-    const sesion = deps.sesiones.cargar(idConversacion);
-    if (!sesion) {
+    // El identificador puede llegar por varias vías y la plataforma puede haber
+    // reemplazado el propuesto por el suyo: vale el primero que tenga sesión.
+    const encontrado = candidatos
+      .map((id) => ({ id, sesion: deps.sesiones.cargar(id) }))
+      .find((c) => c.sesion !== null);
+    if (!encontrado?.sesion) {
       // Sin sesión precargada no hay indicación clínica verificada y por lo tanto
       // no hay nada lícito que decir. Se corta en vez de improvisar.
-      deps.log.error({ idConversacion }, 'Turno recibido sin sesión precargada');
+      deps.log.error({ candidatos }, 'Turno recibido sin sesión precargada');
       return responder(reply, {
         texto: 'Disculpe, no puedo continuar en este momento. Le llamaremos nuevamente.',
         herramienta: 'end_call',
@@ -78,16 +84,25 @@ export function registrarEndpointLLM(app: FastifyInstance, deps: DepsLLM): void 
       });
     }
 
-    const { ctx, st } = sesion;
+    const idConversacion = encontrado.id;
+    const { ctx } = encontrado.sesion;
+    let st = encontrado.sesion.st;
     const ultimoUsuario = [...p.messages].reverse().find((m) => m.role === 'user');
     const textoPaciente = typeof ultimoUsuario?.content === 'string' ? ultimoUsuario.content : '';
 
-    // Primer turno: el agente abre. No hay nada del paciente que clasificar.
-    if (st.auditoria.length === 0 && textoPaciente.trim() === '') {
+    // Primer turno: el agente abre. En una llamada saliente la plataforma espera
+    // a que el interlocutor hable, así que lo primero que llega suele ser un
+    // «aló». Eso no es una respuesta al guion y no se clasifica. La única
+    // excepción es una bandera roja dicha antes de que el agente hable: un
+    // paciente que sangra sigue siendo un paciente que sangra.
+    if (st.auditoria.length === 0) {
       const r = abrir(ctx, st);
       deps.sesiones.guardar(idConversacion, ctx, r.estado);
       deps.auditoria.registrar(r.estado.auditoria.slice(st.auditoria.length));
-      return responder(reply, { texto: r.salida });
+      if (!detectarBanderaRoja(textoPaciente).detectada) {
+        return responder(reply, { texto: r.salida });
+      }
+      st = r.estado;
     }
 
     const ultimoAgente = [...p.messages].reverse().find((m) => m.role === 'assistant');
@@ -147,22 +162,26 @@ function transferir(deps: DepsLLM, ctx: ContextoLlamada, motivo: MotivoEnrutamie
 }
 
 /**
- * El identificador de conversación puede llegar por cabecera propia, por las
- * variables dinámicas de la plataforma o por el campo `user`. Se aceptan las tres
- * para no depender de un único punto de configuración.
+ * Identificadores de conversación que trae la petición, en orden de confianza:
+ * cabecera propia, el marcador que este servicio dejó en el prompt de sistema
+ * del agente (la plataforma sustituye ahí su propio id de conversación), el
+ * cuerpo extra que la plataforma reenvía desde la originación, y el campo
+ * `user`. Se devuelven todos porque la plataforma puede haber reemplazado el
+ * id propuesto por el suyo y la sesión estar indexada por cualquiera de los dos.
  */
-function resolverIdConversacion(req: FastifyRequest, p: z.infer<typeof Peticion>): string | null {
-  const cabecera = req.headers['x-conversation-id'];
-  if (typeof cabecera === 'string' && cabecera.length > 0) return cabecera;
-  const extra = p.elevenlabs_extra_body;
-  if (extra) {
-    for (const clave of ['conversation_id', 'system__conversation_id', 'idConversacion']) {
-      const v = extra[clave];
-      if (typeof v === 'string' && v.length > 0) return v;
-    }
+export function candidatosIdConversacion(req: FastifyRequest, p: z.infer<typeof Peticion>): string[] {
+  const ids: string[] = [];
+  const agregar = (v: unknown) => {
+    if (typeof v === 'string' && v.length > 0 && !ids.includes(v)) ids.push(v);
+  };
+  agregar(req.headers['x-conversation-id']);
+  for (const m of p.messages) {
+    if (m.role === 'system' && typeof m.content === 'string') agregar(extraerIdConversacionDelPrompt(m.content));
   }
-  if (p.user && p.user.length > 0) return p.user;
-  return null;
+  const extra = p.elevenlabs_extra_body;
+  if (extra) for (const clave of ['conversation_id', 'system__conversation_id', 'idConversacion']) agregar(extra[clave]);
+  agregar(p.user);
+  return ids;
 }
 
 interface Salida {

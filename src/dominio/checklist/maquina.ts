@@ -15,6 +15,7 @@ import {
 } from '../tipos.js';
 import { evaluarGuardrails, verificarContenidoCerrado, type Veredicto } from '../guardrails/index.js';
 import { guion, todasLasLineas } from './guion.js';
+import { coincideDiaMes, coincideDigitos, coincideHora, extraerHoraDicha, formatearHora } from './numeros.js';
 
 export interface EstadoLlamada {
   idLlamada: string;
@@ -152,11 +153,13 @@ function transicion(
       if (cls.intencion !== 'responde_dato') {
         return reintentar(ctx, st, entrada, 'No se obtuvo el dato de verificación.');
       }
-      const esperado =
+      // Lo dicho puede venir en cifras o en palabras; se compara como número.
+      const dicho = cls.valorLiteral || entrada;
+      const coincide =
         st.factoresConfirmados === 0
-          ? ctx.verificacion.rutUltimosCuatro
-          : ctx.verificacion.diaMesProcedimiento;
-      if (!coincideFactor(cls.valorLiteral, esperado)) {
+          ? coincideDigitos(dicho, ctx.verificacion.rutUltimosCuatro)
+          : coincideDiaMes(dicho, ctx.verificacion.diaMesProcedimiento);
+      if (!coincide) {
         const salida = guion.verificacionFallida();
         return terminarCon(st, 'terminada_sin_verificar', `Factor de verificación incorrecto (posición ${st.factoresConfirmados + 1}).`, entrada, salida, 'compuerta_identidad');
       }
@@ -176,9 +179,9 @@ function transicion(
 
     case 'ayuno': {
       // Se exige que el paciente REPITA la hora. Un "sí" no cuenta como comprensión.
-      const repetida = extraerHora(cls.valorLiteral || entrada);
-      if (repetida && repetida === ctx.indicacion.horaInicioAyuno) {
-        const s = { ...st, intentosAclaracion: 0, capturado: { ...st.capturado, horaAyunoRepetida: repetida } };
+      // «A las diez» vale por 22:00 en un ayuno nocturno; «diez de la mañana» no.
+      if (coincideHora(cls.valorLiteral || entrada, ctx.indicacion.horaInicioAyuno)) {
+        const s = { ...st, intentosAclaracion: 0, capturado: { ...st.capturado, horaAyunoRepetida: ctx.indicacion.horaInicioAyuno } };
         return siguienteBloqueTrasAyuno(ctx, s, entrada);
       }
       if (st.intentosAclaracion >= 1) {
@@ -402,19 +405,10 @@ function registrar(
   return { ...st, auditoria: [...st.auditoria, evento] };
 }
 
-/** Normaliza y compara un factor de verificación. Tolerante a espacios y separadores. */
-function coincideFactor(dicho: string, esperado: string): boolean {
-  const limpiar = (s: string) => s.replace(/[^0-9]/g, '');
-  const a = limpiar(dicho);
-  const b = limpiar(esperado);
-  return a.length > 0 && a === b;
-}
-
-/** Extrae una hora HH:MM de un texto. No infiere: si no hay hora explícita devuelve ''. */
+/** Extrae una hora HH:MM de un texto, en cifras o en palabras. Sin hora reconocible devuelve ''. */
 export function extraerHora(texto: string): string {
-  const m = texto.match(/\b([01]?\d|2[0-3])\s*[:.]\s*([0-5]\d)\b/);
-  if (m && m[1] && m[2]) return `${m[1].padStart(2, '0')}:${m[2]}`;
-  return '';
+  const h = extraerHoraDicha(texto);
+  return h ? formatearHora(h) : '';
 }
 
 /**

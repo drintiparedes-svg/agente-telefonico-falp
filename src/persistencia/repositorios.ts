@@ -64,6 +64,11 @@ export function crearRepoTrabajos(db: DB) {
       return f ? aTrabajo(f) : null;
     },
 
+    porId(id: string): (Trabajo & { actualizadoEn: string }) | null {
+      const f = db.prepare(`SELECT * FROM trabajos WHERE id=?`).get(id) as Record<string, unknown> | undefined;
+      return f ? { ...aTrabajo(f), actualizadoEn: String(f['actualizado_en']) } : null;
+    },
+
     marcar(id: string, estado: Trabajo['estado']): void {
       db.prepare(`UPDATE trabajos SET estado=?, actualizado_en=? WHERE id=?`).run(estado, ahora(), id);
     },
@@ -209,6 +214,22 @@ export function crearRepoResultados(db: DB) {
         r.datos.motivo_revision,
         ahora(),
       );
+    },
+
+    porLlamada(idLlamada: string): (ResultadoLlamada & { creadoEn: string; revisadoEn: string | null }) | null {
+      const f = db.prepare(`SELECT * FROM resultados WHERE id_llamada=?`).get(idLlamada) as
+        | Record<string, unknown>
+        | undefined;
+      if (!f) return null;
+      return {
+        idLlamada: String(f['id_llamada']),
+        estadoFinal: String(f['estado_final']),
+        criterios: JSON.parse(String(f['criterios_json'])) as ResultadoLlamada['criterios'],
+        datos: JSON.parse(String(f['datos_json'])) as ResultadoLlamada['datos'],
+        requiereRevisionHumana: Number(f['requiere_revision']) === 1,
+        creadoEn: String(f['creado_en']),
+        revisadoEn: f['revisado_en'] == null ? null : String(f['revisado_en']),
+      };
     },
 
     colaDeRevision(limite = 100): Array<{ idLlamada: string; idPaciente: string; motivo: string; estadoFinal: string }> {

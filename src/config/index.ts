@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { MODELOS_TTS } from '../telefonia/agente.js';
 
 const Esquema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
@@ -33,6 +34,41 @@ const Esquema = z.object({
   ELEVENLABS_BASE_URL: z.string().default('https://api.elevenlabs.io'),
 
   /**
+   * Definición del agente en la plataforma. Con estos valores el servicio
+   * escribe la configuración completa del agente (LLM propio, voz, idioma,
+   * privacidad, herramientas) y detecta cambios hechos a mano en el panel.
+   */
+  /** URL pública de este servicio, sin barra final. La plataforma llama a `<URL>/v1/chat/completions`. */
+  SERVICIO_URL_PUBLICA: z.preprocess(
+    (v) => (typeof v === 'string' ? v.trim().replace(/\/+$/, '') || undefined : v),
+    z.string().url().refine((u) => u.startsWith('https://'), 'Debe ser https').optional(),
+  ),
+  /** Nombre del agente en el workspace. Se busca por este nombre cuando no hay ELEVENLABS_AGENT_ID. */
+  ELEVENLABS_AGENTE_NOMBRE: z.string().min(1).default('Catalina AI'),
+  /**
+   * Voz seleccionada y validada con el equipo. Se puede dar por identificador o
+   * por nombre; el identificador manda. Con el nombre, el servicio la busca en
+   * el workspace y exige una coincidencia exacta y única.
+   */
+  ELEVENLABS_VOICE_ID: z.preprocess((v) => (v === '' ? undefined : v), z.string().min(1).optional()),
+  ELEVENLABS_VOICE_NOMBRE: z.string().min(1).default('Catalina'),
+  ELEVENLABS_TTS_MODELO: z.enum(MODELOS_TTS).default('eleven_flash_v2_5'),
+  ELEVENLABS_IDIOMA: z.string().regex(/^[a-z]{2}$/).default('es'),
+  /** Nombre del secreto del workspace que guarda LLM_TOKEN. */
+  ELEVENLABS_SECRETO_LLM_NOMBRE: z.string().min(1).default('agente-falp-llm-token'),
+  /** Webhook post-llamada creado en la plataforma. Lo crea `npm run aprovisionar`. */
+  ELEVENLABS_POSTCALL_WEBHOOK_ID: z.preprocess((v) => (v === '' ? undefined : v), z.string().min(1).optional()),
+  /**
+   * Retención cero en la plataforma. Es condición para tratar datos de pacientes
+   * reales y requiere plan Enterprise; en un workspace sin ese plan la
+   * sincronización falla. `false` solo para desarrollo y demostraciones.
+   */
+  ELEVENLABS_RETENCION_CERO: z
+    .preprocess((v) => (typeof v === 'string' ? v.trim().toLowerCase() : v), z.enum(['true', 'false', '1', '0']))
+    .transform((v) => v === 'true' || v === '1')
+    .default('true'),
+
+  /**
    * Proveedor con que se importó ELEVENLABS_PHONE_NUMBER_ID. `twilio` es la
    * integración nativa, la única con aviso al operador al transferir.
    */
@@ -49,6 +85,14 @@ const Esquema = z.object({
 
   /** `conference` permite avisar al operador; `blind` conserva el caller ID y no avisa. */
   TRANSFERENCIA_TIPO: z.enum(['conference', 'blind']).default('conference'),
+
+  /**
+   * Token que presentan los sistemas que programan llamadas y leen resultados
+   * (la agenda, la ficha, un asistente). Protege /llamadas, /auditoria,
+   * /revision y /conciliacion. Vacío: esos endpoints quedan abiertos, lo que
+   * solo es admisible en desarrollo; en producción es obligatorio.
+   */
+  INTEGRACION_TOKEN: z.preprocess((v) => (v === '' ? undefined : v), z.string().min(16).optional()),
 
   /** Token de los endpoints /admin/*. Sin él, esos endpoints no existen. */
   ADMIN_TOKEN: z.preprocess((v) => (v === '' ? undefined : v), z.string().min(16).optional()),
@@ -94,10 +138,22 @@ export function cargarConfig(env: NodeJS.ProcessEnv = process.env): Config {
     if (r.data.WEBHOOK_SECRETO.startsWith('cambiar-en-produccion')) problemas.push('WEBHOOK_SECRETO');
     if (r.data.LLM_TOKEN.startsWith('cambiar-en-produccion')) problemas.push('LLM_TOKEN');
     if (r.data.NUMERO_TRANSFERENCIA === '') problemas.push('NUMERO_TRANSFERENCIA');
+    if (!r.data.INTEGRACION_TOKEN) problemas.push('INTEGRACION_TOKEN');
+    // Con plataforma real, originar llamadas exige el id del agente: sin él la
+    // plataforma rechaza cada originación y las llamadas quedan fallidas.
+    if (r.data.ELEVENLABS_API_KEY && !r.data.ELEVENLABS_AGENT_ID) problemas.push('ELEVENLABS_AGENT_ID');
     if (problemas.length > 0) {
       throw new Error(
         `No se puede arrancar en producción con estos valores sin definir: ${problemas.join(', ')}. ` +
-          'Un agente clínico sin ruta de transferencia a persona no debe operar.',
+          'Un agente clínico sin ruta de transferencia a persona, o con sus resultados abiertos a cualquiera, no debe operar.',
+      );
+    }
+    // Con plataforma real, la retención cero no es opcional: es la condición bajo
+    // la cual el análisis de factibilidad admite tratar datos de pacientes.
+    if (r.data.ELEVENLABS_API_KEY && !r.data.ELEVENLABS_RETENCION_CERO) {
+      throw new Error(
+        'ELEVENLABS_RETENCION_CERO=false no es admisible en producción con una plataforma real. ' +
+          'Sin retención cero no se pueden tratar datos de pacientes.',
       );
     }
   }

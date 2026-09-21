@@ -20,6 +20,7 @@
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
     "simular": "tsx scripts/simular-llamada.ts",
+    "aprovisionar": "tsx scripts/aprovisionar-agente.ts",
     "migrar": "tsx scripts/migrar.ts"
   },
   "dependencies": {

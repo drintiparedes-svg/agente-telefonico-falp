@@ -166,7 +166,7 @@ describe('Endpoint de LLM', () => {
       });
 
     const t1 = await turno([]);
-    expect(t1.body).toMatch(/asistente telefónico automatizado/i);
+    expect(t1.body).toMatch(/soy Catalina, la asistente telefónica automatizada/i);
     expect(t1.body).toMatch(/grabada/i);
 
     const t2 = await turno([{ role: 'assistant', content: 'apertura' }, { role: 'user', content: 'sí, soy yo' }]);

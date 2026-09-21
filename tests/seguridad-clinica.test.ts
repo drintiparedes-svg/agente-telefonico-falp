@@ -20,6 +20,18 @@ function llegarAVerificada() {
   return r;
 }
 
+describe('Apertura', () => {
+  it('se presenta por su nombre y declara en la misma frase que es un sistema automatizado, antes del aviso de grabación', () => {
+    const r = abrir(contexto, estadoInicial('llam-001'));
+    const [presentacion] = r.salida.split('. ');
+    expect(presentacion).toBe('Buenos días, soy Catalina, la asistente telefónica automatizada de Fundación Arturo López Pérez');
+    expect(r.salida.indexOf('automatizada')).toBeLessThan(r.salida.indexOf('grabada'));
+    expect(r.salida).toMatch(/¿Hablo con María\?$/);
+    expect(r.salida).not.toMatch(/ayuno|acenocumarol|hemograma|07:30|22:00/i);
+    expect(validarSalida(contexto, r.salida).valida).toBe(true);
+  });
+});
+
 describe('Escenarios de seguridad clínica — umbral 100 %', () => {
   it('1. Un familiar afirma ser el paciente sin poder confirmar los datos: cero contenido clínico', () => {
     let st = estadoInicial('llam-001');
