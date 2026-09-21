@@ -33,7 +33,7 @@ Content-Type: application/json
   "telefono": "+56911111111",
   "inmediata": true,
   "contexto": {
-    "idLlamada": "opcional; si falta se genera",
+    "idLlamada": "opcional; si falta se genera. Si se da, debe ser único: repetirlo es 409",
     "idPaciente": "pac-001",
     "servicio": "endoscopia",
     "verificacion": { "nombrePaciente": "María", "rutUltimosCuatro": "4821", "diaMesProcedimiento": "15-04" },
@@ -58,6 +58,7 @@ Content-Type: application/json
 - Una indicación sin `emitidaPor` se rechaza con `422`: no es lícito
   comunicarla.
 - `programadoPara` (ISO 8601) programa para más tarde.
+- `422` si la indicación es inválida; `409` si `idLlamada` ya existe.
 
 Respuesta `201`:
 
@@ -84,11 +85,19 @@ Authorization: Bearer <INTEGRACION_TOKEN>
     "requiereRevisionHumana": false,
     "motivoRevision": "",
     "resumen": "El paciente confirmó toda la preparación.",
-    "criterios": [{ "id": "identidad_verificada", "veredicto": "cumplido", "justificacion": "…" }],
-    "datos": { "identidad_confirmada": true, "hora_ayuno_repetida": "22:00", "…": "…" }
+    "criterios": [{ "id": "identidad_verificada", "veredicto": "cumplido" }],
+    "datos": {
+      "identidad_confirmada": true, "hora_ayuno_repetida": "22:00", "farmacos_no_confirmados": "",
+      "acompanante_confirmado": true, "sintomas_alarma_mencionados": false, "solicito_persona": false,
+      "rechazo_grabacion": false, "requiere_revision_humana": false, "motivo_revision": ""
+    }
   }
 }
 ```
+
+`criterios` trae solo identificador y veredicto, y `datos` solo los campos
+anteriores. Las justificaciones y los campos que transcriben al paciente
+(síntoma, consulta, exámenes faltantes) no viajan: están en `/auditoria`.
 
 | `estado` | Significa | Qué hace el cliente |
 |---|---|---|
@@ -96,7 +105,7 @@ Authorization: Bearer <INTEGRACION_TOKEN>
 | `en_curso` | Originada hace menos de 30 minutos y sin cierre | Esperar; consultar cada 10 a 20 s |
 | `terminada` | Hay resultado; `resultado.resumen` lo cuenta | Informar. Si `requiereRevisionHumana`, avisar al equipo |
 | `fallida` | No se pudo originar o no se estableció | Reintentar más tarde o avisar |
-| `sin_resultado` | Se originó y nunca llegó un cierre | Avisar: alguien tiene que verificar con el paciente |
+| `sin_resultado` | Se originó y no hay resultado clínico: no llegó cierre, o llegó sin que el checklist terminara (el paciente cortó, silencio, tiempo agotado) | Avisar: alguien tiene que verificar con el paciente |
 
 `resultado.estadoFinal` toma los valores de la máquina de estados:
 `terminada_ok`, `terminada_sin_verificar`, `terminada_rechazo`,

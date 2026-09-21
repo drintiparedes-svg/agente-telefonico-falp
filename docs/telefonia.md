@@ -113,9 +113,11 @@ Dos opciones de la plataforma que **no** sirven aquí:
 3. En *Phone Numbers*, importar cada número con la clave API de Twilio.
 
 El agente se llama **Catalina AI** (`ELEVENLABS_AGENTE_NOMBRE`). Si ya existe en
-el workspace, el servicio lo localiza por nombre y lo reescribe; si no existe,
-lo crea. El agente **no se configura en el panel**: lo escribe este servicio.
-Ver la sección siguiente.
+el workspace, el aprovisionamiento y `/admin/agente` lo localizan por nombre; si
+no existe, `npm run aprovisionar` lo crea. Para originar llamadas hace falta su
+identificador en `ELEVENLABS_AGENT_ID`, y en producción es obligatorio. El
+agente **no se configura en el panel**: lo escribe este servicio. Ver la
+sección siguiente.
 
 ### El agente lo define este servicio
 

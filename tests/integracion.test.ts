@@ -135,6 +135,36 @@ describe('Programación inmediata', () => {
     expect(e.json()).toMatchObject({ estado: 'programada' });
   });
 
+  it('el motivo del despacho dice lo que pasa: sin capacidad, o programada para más tarde', async () => {
+    const { svc } = levantar({ CONCURRENCIA_MAX: '1' });
+    const primera = await svc.app.inject({ method: 'POST', url: '/llamadas', payload: cuerpo({ inmediata: true }) });
+    expect(primera.json().despacho.originada).toBe(true);
+    const segunda = await svc.app.inject({
+      method: 'POST', url: '/llamadas', payload: cuerpo({ inmediata: true, contexto: { ...contexto, idLlamada: 'llam-int-2' } }),
+    });
+    expect(segunda.json().despacho).toMatchObject({ originada: false });
+    expect(segunda.json().despacho.motivo).toMatch(/Sin capacidad libre/);
+
+    const futura = await svc.app.inject({
+      method: 'POST', url: '/llamadas',
+      payload: cuerpo({ inmediata: true, programadoPara: '2030-01-06T15:00:00.000Z', contexto: { ...contexto, idLlamada: 'llam-int-3' } }),
+    });
+    expect(futura.json().despacho.motivo).toMatch(/Programada para 2030-01-06/);
+  });
+
+  it('idLlamada es opcional al programar, y repetirlo es 409', async () => {
+    const { svc } = levantar();
+    const { idLlamada: _omitido, ...sinId } = contexto;
+    const r = await svc.app.inject({ method: 'POST', url: '/llamadas', payload: cuerpo({ contexto: sinId }) });
+    expect(r.statusCode).toBe(201);
+    expect(r.json().idTrabajo).toMatch(/^[0-9a-f-]{36}$/);
+
+    expect((await svc.app.inject({ method: 'POST', url: '/llamadas', payload: cuerpo() })).statusCode).toBe(201);
+    const dup = await svc.app.inject({ method: 'POST', url: '/llamadas', payload: cuerpo() });
+    expect(dup.statusCode).toBe(409);
+    expect(dup.json().error).toMatch(/Ya existe/);
+  });
+
   it('una llamada desconocida es 404', async () => {
     const { svc } = levantar();
     expect((await svc.app.inject({ method: 'GET', url: '/llamadas/nada' })).statusCode).toBe(404);
@@ -178,6 +208,13 @@ describe('Resumen de la llamada', () => {
     expect(e.resultado.requiereRevisionHumana).toBe(true);
     expect(e.resultado.resumen).toMatch(/síntoma de alarma/);
     expect(e.resultado.resumen).toMatch(/Requiere revisión humana/);
+    expect(e.resultado.datos.sintomas_alarma_mencionados).toBe(true);
+    // Lo que dijo el paciente no viaja: ni en datos, ni en justificaciones.
+    expect(JSON.stringify(e)).not.toMatch(/fiebre desde ayer/);
+    expect(JSON.stringify(e)).not.toMatch(/justificacion|sintoma_textual|consulta_fuera_de_guion|examenes_faltantes/);
+    // Y sí está en la auditoría, que tiene su propio control de acceso.
+    const a = (await svc.app.inject({ method: 'GET', url: '/auditoria/llam-int-1' })).json();
+    expect(JSON.stringify(a)).toMatch(/fiebre desde ayer/);
   });
 
   it('distingue en curso, sin resultado y fallida a partir del trabajo', () => {

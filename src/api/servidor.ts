@@ -16,7 +16,7 @@ import { crearClasificador } from '../llm/clasificador.js';
 import { registrarEndpointLLM } from '../llm/servidor.js';
 import { crearTrabajadorCola, registrarWebhooks } from '../webhooks/receptor.js';
 import { ClienteElevenLabs, ClienteVozSimulado, type ClienteVoz } from '../telefonia/elevenlabs.js';
-import { crearDespachador, MARGEN_EN_CURSO_MIN } from '../telefonia/despachador.js';
+import { crearDespachador, dentroDeVentana, MARGEN_EN_CURSO_MIN } from '../telefonia/despachador.js';
 import { reglasParaAgente, resolverDestino } from '../telefonia/transferencias.js';
 import { compararAgente, cuerpoAgente, type DefinicionAgente } from '../telefonia/agente.js';
 import { conciliar } from '../conciliacion/conciliar.js';
@@ -83,6 +83,31 @@ export function definicionAgente(
 }
 
 /**
+ * Agente sobre el que se opera. Manda ELEVENLABS_AGENT_ID; sin él se busca por
+ * ELEVENLABS_AGENTE_NOMBRE en el workspace y se exige una coincidencia única.
+ * Si no existe, hay que aprovisionarlo (`npm run aprovisionar`).
+ */
+export async function resolverAgente(
+  cfg: Config,
+  cliente: ClienteVoz,
+): Promise<{ ok: true; agentId: string; origen: 'id' | 'nombre' } | { ok: false; error: string }> {
+  if (cfg.ELEVENLABS_AGENT_ID) {
+    cliente.usarAgente(cfg.ELEVENLABS_AGENT_ID);
+    return { ok: true, agentId: cfg.ELEVENLABS_AGENT_ID, origen: 'id' };
+  }
+  const b = await cliente.buscarAgente(cfg.ELEVENLABS_AGENTE_NOMBRE);
+  if (!b.ok) return { ok: false, error: `No se pudo buscar el agente «${cfg.ELEVENLABS_AGENTE_NOMBRE}»: ${b.error}` };
+  if (b.agente) {
+    cliente.usarAgente(b.agente.agentId);
+    return { ok: true, agentId: b.agente.agentId, origen: 'nombre' };
+  }
+  if (b.candidatos.length > 1) {
+    return { ok: false, error: `Hay ${b.candidatos.length} agentes llamados «${cfg.ELEVENLABS_AGENTE_NOMBRE}»: ${b.candidatos.map((a) => a.agentId).join(', ')}. Defina ELEVENLABS_AGENT_ID.` };
+  }
+  return { ok: false, error: `No existe ningún agente llamado «${cfg.ELEVENLABS_AGENTE_NOMBRE}». Ejecute npm run aprovisionar o defina ELEVENLABS_AGENT_ID.` };
+}
+
+/**
  * Escribe la definición completa del agente en la plataforma: secreto del token,
  * LLM propio, voz, idioma, privacidad, herramientas y reglas de transferencia.
  * Es la única vía sancionada para cambiar el agente; el panel es solo lectura.
@@ -92,11 +117,14 @@ export async function sincronizarAgente(
   cliente: ClienteVoz,
   reglas: DefinicionAgente['reglas'],
 ): Promise<
-  | { ok: true; reglas: number; voiceId: string; secretoCreado: boolean; discrepanciasPrevias: ReturnType<typeof compararAgente> }
+  | { ok: true; agentId: string; reglas: number; voiceId: string; secretoCreado: boolean; discrepanciasPrevias: ReturnType<typeof compararAgente> }
   | { ok: false; error: string; faltan?: string[] }
 > {
   const faltan = faltantesParaAgente(cfg);
   if (faltan.length > 0) return { ok: false, error: `Faltan variables para definir el agente: ${faltan.join(', ')}`, faltan };
+
+  const agente = await resolverAgente(cfg, cliente);
+  if (!agente.ok) return { ok: false, error: agente.error };
 
   const voz = await resolverVoz(cfg, cliente);
   if (!voz.ok) return { ok: false, error: voz.error };
@@ -110,7 +138,7 @@ export async function sincronizarAgente(
 
   const r = await cliente.escribirAgente(cuerpoAgente(definicion));
   if (!r.ok) return { ok: false, error: r.error };
-  return { ok: true, reglas: reglas.length, voiceId: voz.voiceId, secretoCreado: secreto.creado, discrepanciasPrevias };
+  return { ok: true, agentId: agente.agentId, reglas: reglas.length, voiceId: voz.voiceId, secretoCreado: secreto.creado, discrepanciasPrevias };
 }
 
 export interface Servicio {
@@ -165,13 +193,16 @@ export function construirServicio(cfg: Config, clienteVoz?: ClienteVoz, opciones
   const numeros = crearRepoNumeros(db);
   const destinos = crearRepoDestinos(db);
 
+  // Con clave se usa la plataforma real. El agente puede venir por id o
+  // resolverse por nombre en /admin/agente; para originar llamadas hace falta
+  // el id, y en producción la configuración lo exige.
   const cliente: ClienteVoz =
     clienteVoz ??
-    (cfg.ELEVENLABS_API_KEY && cfg.ELEVENLABS_AGENT_ID
+    (cfg.ELEVENLABS_API_KEY
       ? new ClienteElevenLabs({
           baseUrl: cfg.ELEVENLABS_BASE_URL,
           apiKey: cfg.ELEVENLABS_API_KEY,
-          agentId: cfg.ELEVENLABS_AGENT_ID,
+          agentId: cfg.ELEVENLABS_AGENT_ID ?? '',
         })
       : new ClienteVozSimulado());
 
@@ -274,19 +305,26 @@ export function construirServicio(cfg: Config, clienteVoz?: ClienteVoz, opciones
       contexto: b.contexto,
       ...(b.programadoPara ? { programadoPara: b.programadoPara } : {}),
     });
-    if (!r.ok) return reply.code(422).send(r);
+    if (!r.ok) return reply.code(r.duplicado ? 409 : 422).send(r);
 
     if (b.inmediata === true && r.idTrabajo) {
-      const lote = await despachador.despacharLote((opciones.reloj ?? (() => new Date()))());
+      const ahora = (opciones.reloj ?? (() => new Date()))();
+      await despachador.despacharLote(ahora);
       const t = trabajos.porId(r.idTrabajo);
       const originada = t?.estado === 'despachado';
+      // El motivo se decide con lo que se sabe, no adivinando desde el lote.
       const motivo = originada
         ? 'La llamada se originó.'
         : t?.estado === 'fallido'
           ? 'La plataforma no aceptó la llamada.'
-          : lote.despachados === 0 && lote.fallidos === 0 && lote.omitidos === 0
-            ? 'Fuera de ventana horaria o sin números de salida activos: la llamada queda en cola.'
-            : 'Sin capacidad libre en este momento: la llamada queda en cola.';
+          // «Vencida» la decide el repositorio con el reloj real; aquí igual.
+          : t && new Date(t.programadoPara).getTime() > Date.now() + 1000
+            ? `Programada para ${t.programadoPara}: saldrá a su hora.`
+            : !dentroDeVentana(ahora)
+              ? 'Fuera de ventana horaria: la llamada queda en cola y sale a partir de las 9 de la mañana, de lunes a sábado.'
+              : numeros.activos().length === 0
+                ? 'Sin números de salida activos: la llamada queda en cola.'
+                : 'Sin capacidad libre en este momento: la llamada queda en cola.';
       return reply.code(201).send({ ...r, despacho: { intentado: true, originada, motivo } });
     }
     return reply.code(201).send({ ...r, despacho: { intentado: false, originada: false, motivo: 'La llamada queda en cola.' } });
@@ -401,15 +439,17 @@ export function construirServicio(cfg: Config, clienteVoz?: ClienteVoz, opciones
           const faltan = faltantesParaAgente(cfg);
           if (faltan.length > 0) return reply.code(422).send({ error: 'Definición incompleta', faltan });
           const reglas = reglasParaAgente(destinos.activos(), cfg.NUMERO_TRANSFERENCIA, cfg.TRANSFERENCIA_TIPO);
+          const agente = await resolverAgente(cfg, cliente);
+          if (!agente.ok) return reply.code(502).send({ error: agente.error });
           const voz = await resolverVoz(cfg, cliente);
           if (!voz.ok) return reply.code(502).send({ error: voz.error });
           const actual = await cliente.leerAgente();
           if (!actual.ok) return reply.code(502).send({ error: actual.error });
-          if (actual.datos === null) return { agentId: cfg.ELEVENLABS_AGENT_ID ?? null, existe: false, voiceId: voz.voiceId, discrepancias: [] };
+          if (actual.datos === null) return { agentId: agente.agentId, existe: false, voiceId: voz.voiceId, discrepancias: [] };
           // El secreto no se compara: la plataforma no devuelve su valor.
           const discrepancias = compararAgente(definicionAgente(cfg, { secretIdLlm: '', voiceId: voz.voiceId, reglas }), actual.datos);
           return {
-            agentId: (actual.datos as Record<string, unknown>)['agent_id'] ?? cfg.ELEVENLABS_AGENT_ID ?? null,
+            agentId: agente.agentId,
             nombre: cfg.ELEVENLABS_AGENTE_NOMBRE,
             existe: true,
             voiceId: voz.voiceId,

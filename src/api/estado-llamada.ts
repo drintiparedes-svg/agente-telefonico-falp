@@ -4,8 +4,10 @@
  * Un sistema cliente (la agenda, la ficha, un asistente) necesita saber en qué
  * está la llamada sin leer la tabla de transiciones. Este resumen se deriva del
  * trabajo y del resultado, y es deliberadamente escueto: el desenlace y qué
- * hacer con él. No incluye lo que dijo el paciente; eso vive en la auditoría,
- * con su propio control de acceso.
+ * hacer con él. No incluye lo que dijo el paciente: los campos de `datos` que
+ * transcriben literalmente al paciente (síntoma, consulta, exámenes faltantes)
+ * y las justificaciones de los criterios quedan fuera. Eso vive en la
+ * auditoría, con su propio control de acceso.
  */
 import type { ResultadoLlamada } from '../dominio/criterios/index.js';
 import type { Trabajo } from '../persistencia/repositorios.js';
@@ -27,11 +29,40 @@ export interface ResumenLlamada {
     estadoFinal: string;
     requiereRevisionHumana: boolean;
     motivoRevision: string;
-    criterios: ResultadoLlamada['criterios'];
-    datos: ResultadoLlamada['datos'];
+    /** Solo id y veredicto: la justificación puede citar al paciente. */
+    criterios: Array<Pick<ResultadoLlamada['criterios'][number], 'id' | 'veredicto'>>;
+    /** Subconjunto de los datos extraídos que no transcribe al paciente. */
+    datos: DatosPublicables;
     /** Una frase con el desenlace, para leerla en voz alta o ponerla en una bandeja. */
     resumen: string;
   } | null;
+}
+
+export type DatosPublicables = Pick<
+  ResultadoLlamada['datos'],
+  | 'identidad_confirmada'
+  | 'hora_ayuno_repetida'
+  | 'farmacos_no_confirmados'
+  | 'acompanante_confirmado'
+  | 'sintomas_alarma_mencionados'
+  | 'solicito_persona'
+  | 'rechazo_grabacion'
+  | 'requiere_revision_humana'
+  | 'motivo_revision'
+>;
+
+export function datosPublicables(d: ResultadoLlamada['datos']): DatosPublicables {
+  return {
+    identidad_confirmada: d.identidad_confirmada,
+    hora_ayuno_repetida: d.hora_ayuno_repetida,
+    farmacos_no_confirmados: d.farmacos_no_confirmados,
+    acompanante_confirmado: d.acompanante_confirmado,
+    sintomas_alarma_mencionados: d.sintomas_alarma_mencionados,
+    solicito_persona: d.solicito_persona,
+    rechazo_grabacion: d.rechazo_grabacion,
+    requiere_revision_humana: d.requiere_revision_humana,
+    motivo_revision: d.motivo_revision,
+  };
 }
 
 /** Estados finales de la máquina, en palabras de quien no leyó el código. */
@@ -64,8 +95,8 @@ export function resumirLlamada(
         estadoFinal: r.estadoFinal,
         requiereRevisionHumana: r.requiereRevisionHumana,
         motivoRevision: r.datos.motivo_revision,
-        criterios: r.criterios,
-        datos: r.datos,
+        criterios: r.criterios.map((c) => ({ id: c.id, veredicto: c.veredicto })),
+        datos: datosPublicables(r.datos),
         resumen: fraseDelResultado(r),
       }
     : null;

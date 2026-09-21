@@ -159,10 +159,20 @@ export interface HoraDicha {
  * número reconocible devuelve null.
  */
 export function extraerHoraDicha(texto: string): HoraDicha | null {
-  const t = normalizarTexto(texto);
+  // «a la una» es la única hora que no se dice con «las»; y «una» no cuenta
+  // como número en el resto del texto (ver UNIDADES).
+  const t = normalizarTexto(texto).replace(/\ba la una\b/g, 'a las 1');
+  const tarde = PERIODO_TARDE.test(t);
+  const manana = PERIODO_MANANA.test(t);
+
+  // «10:00 de la noche» lleva el periodo aparte de la cifra; se respeta igual.
   const explicita = t.match(/\b([01]?\d|2[0-3])\s*[:.]\s*([0-5]\d)\b/);
   if (explicita) {
-    return { hora: Number(explicita[1]), minutos: Number(explicita[2]), periodoExplicito: true };
+    const hora = Number(explicita[1]);
+    let h = hora;
+    if (tarde && h < 12) h += 12;
+    if (tarde && h === 12 && /noche/.test(t)) h = 0;
+    return { hora: h, minutos: Number(explicita[2]), periodoExplicito: tarde || manana || hora > 12 };
   }
 
   const numeros = extraerNumeros(t);
@@ -182,8 +192,6 @@ export function extraerHoraDicha(texto: string): HoraDicha | null {
     if (siguiente !== undefined && siguiente < 60 && /\b(y|con)\b/.test(t)) minutos = siguiente;
   }
 
-  const tarde = PERIODO_TARDE.test(t);
-  const manana = PERIODO_MANANA.test(t);
   if (tarde && h < 12) h += 12;
   // «doce de la noche» es medianoche.
   if (tarde && h === 12 && /noche/.test(t)) h = 0;

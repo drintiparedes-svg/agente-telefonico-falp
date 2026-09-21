@@ -85,6 +85,13 @@ describe('Horas dichas', () => {
     expect(f('ocho menos cuarto')).toBe('07:45');
     expect(f('siete y veinte')).toBe('07:20');
     expect(f('a las doce de la noche')).toBe('00:00');
+    // La cifra con el periodo aparte, como escribe un transcriptor.
+    expect(f('a las 10:00 de la noche')).toBe('22:00');
+    expect(f('10:00 pm')).toBe('22:00');
+    expect(f('7:30 de la mañana')).toBe('07:30');
+    // La única hora que se dice en singular.
+    expect(f('a la una')).toBe('01:00');
+    expect(f('a la una de la tarde')).toBe('13:00');
     expect(f('sí, entendí')).toBeNull();
   });
 
@@ -97,6 +104,9 @@ describe('Horas dichas', () => {
     }
     expect(coincideHora('siete y media', '07:30')).toBe(true);
     expect(coincideHora('siete y media de la tarde', '07:30')).toBe(false);
+    expect(coincideHora('a las 10:00 de la noche', '22:00')).toBe(true);
+    expect(coincideHora('a las 10:00 de la mañana', '22:00')).toBe(false);
+    expect(coincideHora('a la una', '13:00')).toBe(true);
   });
 });
 

@@ -40,7 +40,7 @@ const Esquema = z.object({
    */
   /** URL pública de este servicio, sin barra final. La plataforma llama a `<URL>/v1/chat/completions`. */
   SERVICIO_URL_PUBLICA: z.preprocess(
-    (v) => (v === '' ? undefined : v),
+    (v) => (typeof v === 'string' ? v.trim().replace(/\/+$/, '') || undefined : v),
     z.string().url().refine((u) => u.startsWith('https://'), 'Debe ser https').optional(),
   ),
   /** Nombre del agente en el workspace. Se busca por este nombre cuando no hay ELEVENLABS_AGENT_ID. */
@@ -139,6 +139,9 @@ export function cargarConfig(env: NodeJS.ProcessEnv = process.env): Config {
     if (r.data.LLM_TOKEN.startsWith('cambiar-en-produccion')) problemas.push('LLM_TOKEN');
     if (r.data.NUMERO_TRANSFERENCIA === '') problemas.push('NUMERO_TRANSFERENCIA');
     if (!r.data.INTEGRACION_TOKEN) problemas.push('INTEGRACION_TOKEN');
+    // Con plataforma real, originar llamadas exige el id del agente: sin él la
+    // plataforma rechaza cada originación y las llamadas quedan fallidas.
+    if (r.data.ELEVENLABS_API_KEY && !r.data.ELEVENLABS_AGENT_ID) problemas.push('ELEVENLABS_AGENT_ID');
     if (problemas.length > 0) {
       throw new Error(
         `No se puede arrancar en producción con estos valores sin definir: ${problemas.join(', ')}. ` +

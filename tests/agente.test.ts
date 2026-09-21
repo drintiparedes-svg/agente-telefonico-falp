@@ -170,7 +170,7 @@ describe('Id de conversación desde el prompt de sistema', () => {
 
 describe('Sincronización del agente por la API de administración', () => {
   const headers = { authorization: `Bearer ${ADMIN}` };
-  const env = { ADMIN_TOKEN: ADMIN, SERVICIO_URL_PUBLICA: URL_PUBLICA, ELEVENLABS_VOICE_ID: 'voz_1' };
+  const env = { ADMIN_TOKEN: ADMIN, SERVICIO_URL_PUBLICA: URL_PUBLICA, ELEVENLABS_VOICE_ID: 'voz_1', ELEVENLABS_AGENT_ID: 'agente-simulado' };
 
   it('escribe el secreto del token y la definición completa, y después no hay discrepancias', async () => {
     const { svc, cliente } = levantar(env);
@@ -218,7 +218,7 @@ describe('Sincronización del agente por la API de administración', () => {
   });
 
   it('sin ELEVENLABS_VOICE_ID busca la voz por nombre y exige una coincidencia única', async () => {
-    const soloUrl = { ADMIN_TOKEN: ADMIN, SERVICIO_URL_PUBLICA: URL_PUBLICA };
+    const soloUrl = { ADMIN_TOKEN: ADMIN, SERVICIO_URL_PUBLICA: URL_PUBLICA, ELEVENLABS_AGENT_ID: 'agente-simulado' };
     const { svc, cliente } = levantar(soloUrl);
 
     // Sin ninguna voz con ese nombre: no se sincroniza ni se adivina.
@@ -246,6 +246,28 @@ describe('Sincronización del agente por la API de administración', () => {
     expect((cliente.agente as Cuerpo).conversation_config.tts.voice_id).toBe('v_cl');
   });
 
+  it('sin ELEVENLABS_AGENT_ID localiza el agente por nombre, y sin agente en el workspace no sincroniza', async () => {
+    const sinId = { ADMIN_TOKEN: ADMIN, SERVICIO_URL_PUBLICA: URL_PUBLICA, ELEVENLABS_VOICE_ID: 'voz_1' };
+    const { svc, cliente } = levantar(sinId);
+
+    const nada = await svc.app.inject({ method: 'POST', url: '/admin/agente/sincronizar', headers });
+    expect(nada.statusCode).toBe(502);
+    expect(nada.json().error).toMatch(/No existe ningún agente llamado «Catalina AI»/);
+    expect(cliente.agente).toBeNull();
+
+    cliente.agentes = [{ agentId: 'agent_cat', nombre: 'catalina ai', voiceId: 'voz_1' }];
+    const ok = await svc.app.inject({ method: 'POST', url: '/admin/agente/sincronizar', headers });
+    expect(ok.statusCode).toBe(200);
+    expect(ok.json().agentId).toBe('agent_cat');
+    expect(cliente.agenteEnUso).toBe('agent_cat');
+    expect((await svc.app.inject({ method: 'GET', url: '/admin/agente', headers })).json().agentId).toBe('agent_cat');
+
+    cliente.agentes.push({ agentId: 'agent_dup', nombre: 'Catalina AI', voiceId: 'v' });
+    const ambiguo = await svc.app.inject({ method: 'GET', url: '/admin/agente', headers });
+    expect(ambiguo.statusCode).toBe(502);
+    expect(ambiguo.json().error).toMatch(/2 agentes llamados/);
+  });
+
   it('el identificador de voz manda sobre el nombre', async () => {
     const { svc, cliente } = levantar({ ...env, ELEVENLABS_VOICE_NOMBRE: 'Otra' });
     cliente.voces = [{ voiceId: 'v_otra', nombre: 'Otra', etiquetas: {}, idiomas: [] }];
@@ -269,6 +291,7 @@ describe('Sincronización del agente por la API de administración', () => {
         NUMERO_TRANSFERENCIA: RESPALDO,
         INTEGRACION_TOKEN: 'integracion-de-produccion-1234',
         ELEVENLABS_API_KEY: 'clave',
+        ELEVENLABS_AGENT_ID: 'agent_1',
         ELEVENLABS_RETENCION_CERO: 'false',
       } as NodeJS.ProcessEnv),
     ).toThrow(/RETENCION_CERO/);
@@ -294,12 +317,16 @@ describe('Cliente ElevenLabs: agente, secretos y webhook', () => {
   it('crea el secreto si no existe y lo actualiza si existe', async () => {
     const nuevo = falso([{ cuerpo: { secrets: [] } }, { cuerpo: { type: 'stored', secret_id: 'sec_9', name: 'n' } }]);
     expect(await nuevo.cliente.asegurarSecreto('n', 'v')).toEqual({ ok: true, error: null, secretId: 'sec_9', creado: true });
-    expect(nuevo.pedidos.map((p) => `${p.metodo} ${p.url}`)).toEqual(['GET https://api.prueba/v1/convai/secrets', 'POST https://api.prueba/v1/convai/secrets']);
-    expect(nuevo.pedidos[1]?.cuerpo).toEqual({ name: 'n', value: 'v' });
+    expect(nuevo.pedidos.map((p) => `${p.metodo} ${p.url}`)).toEqual([
+      'GET https://api.prueba/v1/convai/secrets?search=n&page_size=100',
+      'POST https://api.prueba/v1/convai/secrets',
+    ]);
+    // `type` es el discriminador de la API: sin él la plataforma rechaza el cuerpo.
+    expect(nuevo.pedidos[1]?.cuerpo).toEqual({ type: 'new', name: 'n', value: 'v' });
 
     const existente = falso([{ cuerpo: { secrets: [{ type: 'stored', secret_id: 'sec_3', name: 'n' }] } }, { cuerpo: {} }]);
     expect(await existente.cliente.asegurarSecreto('n', 'v2')).toEqual({ ok: true, error: null, secretId: 'sec_3', creado: false });
-    expect(existente.pedidos[1]).toMatchObject({ metodo: 'PATCH', url: 'https://api.prueba/v1/convai/secrets/sec_3', cuerpo: { name: 'n', value: 'v2' } });
+    expect(existente.pedidos[1]).toMatchObject({ metodo: 'PATCH', url: 'https://api.prueba/v1/convai/secrets/sec_3', cuerpo: { type: 'update', name: 'n', value: 'v2' } });
   });
 
   it('lee, escribe y crea el agente por las rutas de la plataforma', async () => {

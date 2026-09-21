@@ -264,16 +264,19 @@ export class ClienteElevenLabs implements ClienteVoz {
 
   asegurarSecreto(nombre: string, valor: string): Promise<Resultado<{ secretId: string; creado: boolean }>> {
     return this.intentar<{ secretId: string; creado: boolean }>(async () => {
-      const lista = await this.pedir('/v1/convai/secrets', 'GET');
+      // Búsqueda por nombre: la lista está paginada y el secreto podría no caer
+      // en la primera página.
+      const lista = await this.pedir(`/v1/convai/secrets?search=${encodeURIComponent(nombre)}&page_size=100`, 'GET');
       if (!lista.ok) return { ok: false, error: this.fallo(lista) };
       const secretos = ((lista.datos ?? {}) as { secrets?: Array<Record<string, unknown>> }).secrets ?? [];
       const existente = secretos.find((s) => s['name'] === nombre);
       if (existente && typeof existente['secret_id'] === 'string') {
         const id = existente['secret_id'];
-        const r = await this.pedir(`/v1/convai/secrets/${encodeURIComponent(id)}`, 'PATCH', { name: nombre, value: valor });
+        // `type` es el discriminador que exige la API ("new" al crear, "update" al cambiar).
+        const r = await this.pedir(`/v1/convai/secrets/${encodeURIComponent(id)}`, 'PATCH', { type: 'update', name: nombre, value: valor });
         return r.ok ? { ok: true, error: null, secretId: id, creado: false } : { ok: false, error: this.fallo(r) };
       }
-      const r = await this.pedir('/v1/convai/secrets', 'POST', { name: nombre, value: valor });
+      const r = await this.pedir('/v1/convai/secrets', 'POST', { type: 'new', name: nombre, value: valor });
       const id = ((r.datos ?? {}) as Record<string, unknown>)['secret_id'];
       if (!r.ok || typeof id !== 'string') return { ok: false, error: this.fallo(r) };
       return { ok: true, error: null, secretId: id, creado: true };
