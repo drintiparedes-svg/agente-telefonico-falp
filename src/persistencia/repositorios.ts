@@ -64,9 +64,9 @@ export function crearRepoTrabajos(db: DB) {
       return f ? aTrabajo(f) : null;
     },
 
-    porId(id: string): (Trabajo & { actualizadoEn: string }) | null {
+    porId(id: string): (Trabajo & { creadoEn: string; actualizadoEn: string }) | null {
       const f = db.prepare(`SELECT * FROM trabajos WHERE id=?`).get(id) as Record<string, unknown> | undefined;
-      return f ? { ...aTrabajo(f), actualizadoEn: String(f['actualizado_en']) } : null;
+      return f ? { ...aTrabajo(f), creadoEn: String(f['creado_en']), actualizadoEn: String(f['actualizado_en']) } : null;
     },
 
     marcar(id: string, estado: Trabajo['estado']): void {
@@ -105,6 +105,23 @@ export function crearRepoTrabajos(db: DB) {
       db.prepare(
         `UPDATE trabajos SET estado='pendiente', intentos=MAX(intentos-1, 0), actualizado_en=? WHERE id=?`,
       ).run(ahora(), id);
+    },
+
+    /**
+     * Llamadas más recientes primero, para la consola del equipo. Filtra por
+     * fecha de creación y por paciente; el detalle de cada una se arma aparte.
+     */
+    listar(f: { limite?: number; desde?: string; hasta?: string; idPaciente?: string } = {}): Array<Trabajo & { creadoEn: string; actualizadoEn: string }> {
+      const cond: string[] = [];
+      const args: unknown[] = [];
+      if (f.desde) { cond.push('creado_en >= ?'); args.push(f.desde); }
+      if (f.hasta) { cond.push('creado_en <= ?'); args.push(f.hasta); }
+      if (f.idPaciente) { cond.push('id_paciente = ?'); args.push(f.idPaciente); }
+      const where = cond.length > 0 ? `WHERE ${cond.join(' AND ')}` : '';
+      const filas = db
+        .prepare(`SELECT * FROM trabajos ${where} ORDER BY creado_en DESC LIMIT ?`)
+        .all(...args, Math.min(f.limite ?? 200, 1000)) as Record<string, unknown>[];
+      return filas.map((x) => ({ ...aTrabajo(x), creadoEn: String(x['creado_en']), actualizadoEn: String(x['actualizado_en']) }));
     },
 
     /** Trabajos despachados sin resultado recibido. Insumo de la conciliación diaria. */
@@ -486,6 +503,58 @@ export function crearRepoDestinos(db: DB) {
         d.id, d.e164, d.etiqueta, d.motivo, d.servicio, d.horaDesde, d.horaHasta, d.dias,
         d.prioridad, d.activo ? 1 : 0, ahora(), ahora(),
       );
+    },
+  };
+}
+
+// ------------------------------------------------------------ anotaciones
+
+/**
+ * Campos que una persona puede completar después de la llamada. Conjunto
+ * cerrado: cada uno se muestra en el informe junto al dato original, nunca en
+ * su lugar.
+ */
+export const CAMPOS_ANOTABLES = [
+  'acompanante_confirmado',
+  'examenes_faltantes',
+  'farmacos_no_confirmados',
+  'hora_ayuno_repetida',
+  'educacion_reforzada',
+  'contacto_manual',
+  'telefono_alternativo',
+  'observacion',
+] as const;
+export type CampoAnotable = (typeof CAMPOS_ANOTABLES)[number];
+
+export interface Anotacion {
+  id: number;
+  idLlamada: string;
+  campo: CampoAnotable;
+  valor: string;
+  nota: string;
+  autor: string;
+  creadoEn: string;
+}
+
+export function crearRepoAnotaciones(db: DB) {
+  const aAnotacion = (f: Record<string, unknown>): Anotacion => ({
+    id: Number(f['id']),
+    idLlamada: String(f['id_llamada']),
+    campo: String(f['campo']) as CampoAnotable,
+    valor: String(f['valor']),
+    nota: String(f['nota'] ?? ''),
+    autor: String(f['autor']),
+    creadoEn: String(f['creado_en']),
+  });
+  return {
+    agregar(a: Omit<Anotacion, 'id' | 'creadoEn'>): Anotacion {
+      const r = db
+        .prepare(`INSERT INTO anotaciones (id_llamada, campo, valor, nota, autor, creado_en) VALUES (?, ?, ?, ?, ?, ?)`)
+        .run(a.idLlamada, a.campo, a.valor, a.nota, a.autor, ahora());
+      return aAnotacion(db.prepare(`SELECT * FROM anotaciones WHERE id=?`).get(Number(r.lastInsertRowid)) as Record<string, unknown>);
+    },
+    porLlamada(idLlamada: string): Anotacion[] {
+      return (db.prepare(`SELECT * FROM anotaciones WHERE id_llamada=? ORDER BY id`).all(idLlamada) as Record<string, unknown>[]).map(aAnotacion);
     },
   };
 }

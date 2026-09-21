@@ -1,0 +1,392 @@
+<!doctype html>
+<html lang="es-CL">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Consola de llamadas</title>
+<meta name="description" content="Carga de pacientes por texto, voz o planilla, y revisión tabulada de cada llamada de preparación.">
+<style>
+  :root {
+    --fondo: #f6f7f9; --panel: #ffffff; --borde: #d9dde3; --texto: #17202a; --suave: #5b6675;
+    --primario: #0f5c8c; --primario-texto: #ffffff; --ok: #1f7a4d; --alerta: #b45309; --error: #b3261e;
+    --ok-fondo: #e7f5ec; --alerta-fondo: #fdf1e2; --error-fondo: #fbe9e7; --neutro-fondo: #eef1f4;
+    --radio: 8px; --sombra: 0 1px 2px rgba(0,0,0,.06);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --fondo: #0f1419; --panel: #171d24; --borde: #2a323c; --texto: #e7ebef; --suave: #98a2ad;
+      --primario: #4aa3dd; --primario-texto: #0b1a26; --ok: #4cc38a; --alerta: #f0a94a; --error: #f28b82;
+      --ok-fondo: #12301f; --alerta-fondo: #34250f; --error-fondo: #3a1a17; --neutro-fondo: #1f262e;
+    }
+  }
+  :root[data-theme="dark"] {
+    --fondo: #0f1419; --panel: #171d24; --borde: #2a323c; --texto: #e7ebef; --suave: #98a2ad;
+    --primario: #4aa3dd; --primario-texto: #0b1a26; --ok: #4cc38a; --alerta: #f0a94a; --error: #f28b82;
+    --ok-fondo: #12301f; --alerta-fondo: #34250f; --error-fondo: #3a1a17; --neutro-fondo: #1f262e;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--fondo); color: var(--texto); font: 15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  header { background: var(--panel); border-bottom: 1px solid var(--borde); padding: 12px 16px; display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+  header h1 { font-size: 17px; margin: 0; font-weight: 650; }
+  header .sesion { margin-left: auto; display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  header input { width: 200px; }
+  nav { display: flex; gap: 4px; padding: 10px 16px 0; flex-wrap: wrap; }
+  nav button { background: none; border: 1px solid transparent; border-bottom: none; padding: 8px 14px; border-radius: var(--radio) var(--radio) 0 0; color: var(--suave); cursor: pointer; font: inherit; }
+  nav button[aria-selected="true"] { background: var(--panel); border-color: var(--borde); color: var(--texto); font-weight: 600; }
+  main { padding: 0 16px 40px; max-width: 1240px; margin: 0 auto; }
+  section[role="tabpanel"] { background: var(--panel); border: 1px solid var(--borde); border-radius: 0 var(--radio) var(--radio) var(--radio); padding: 16px; box-shadow: var(--sombra); }
+  h2 { font-size: 16px; margin: 0 0 8px; }
+  h3 { font-size: 14px; margin: 18px 0 8px; color: var(--suave); text-transform: uppercase; letter-spacing: .04em; }
+  p.ayuda { color: var(--suave); margin: 0 0 12px; }
+  textarea, input, select { font: inherit; color: var(--texto); background: var(--fondo); border: 1px solid var(--borde); border-radius: 6px; padding: 8px 10px; width: 100%; }
+  textarea { min-height: 110px; resize: vertical; }
+  label { display: block; font-size: 13px; color: var(--suave); margin-bottom: 4px; }
+  .campo { margin-bottom: 10px; }
+  .grilla { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px 14px; }
+  .fila { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin: 10px 0; }
+  button.accion, button.secundario { font: inherit; border-radius: 6px; padding: 8px 14px; cursor: pointer; border: 1px solid var(--borde); background: var(--panel); color: var(--texto); }
+  button.accion { background: var(--primario); color: var(--primario-texto); border-color: var(--primario); font-weight: 600; }
+  button:disabled { opacity: .5; cursor: default; }
+  .aviso { border-radius: 6px; padding: 8px 12px; margin: 8px 0; font-size: 14px; }
+  .aviso.ok { background: var(--ok-fondo); color: var(--ok); }
+  .aviso.alerta { background: var(--alerta-fondo); color: var(--alerta); }
+  .aviso.error { background: var(--error-fondo); color: var(--error); }
+  .aviso.neutro { background: var(--neutro-fondo); color: var(--suave); }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  th, td { text-align: left; padding: 7px 8px; border-bottom: 1px solid var(--borde); vertical-align: top; }
+  th { color: var(--suave); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: .03em; }
+  tr.clic { cursor: pointer; }
+  tr.clic:hover td { background: var(--neutro-fondo); }
+  .tabla { overflow-x: auto; }
+  .chip { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; background: var(--neutro-fondo); color: var(--suave); white-space: nowrap; }
+  .chip.ok { background: var(--ok-fondo); color: var(--ok); }
+  .chip.alerta { background: var(--alerta-fondo); color: var(--alerta); }
+  .chip.error { background: var(--error-fondo); color: var(--error); }
+  .farmaco { display: grid; grid-template-columns: 1fr 3fr auto; gap: 8px; margin-bottom: 6px; }
+  .transcripcion { display: grid; grid-template-columns: 90px 1fr; gap: 4px 12px; font-size: 14px; }
+  .transcripcion .quien { color: var(--suave); font-size: 12px; text-transform: uppercase; padding-top: 3px; }
+  .transcripcion .agente { background: var(--neutro-fondo); border-radius: 6px; padding: 6px 10px; }
+  .transcripcion .paciente { padding: 6px 10px; border-left: 3px solid var(--primario); }
+  .detalle-cab { display: flex; gap: 16px; flex-wrap: wrap; align-items: baseline; }
+  .detalle-cab .volver { color: var(--primario); background: none; border: none; cursor: pointer; font: inherit; padding: 0; }
+  .grabando { color: var(--error); font-weight: 600; }
+  .oculto { display: none !important; }
+  code { background: var(--neutro-fondo); padding: 1px 5px; border-radius: 4px; font-size: 13px; }
+  @media (max-width: 640px) { .farmaco { grid-template-columns: 1fr; } header input { width: 100%; } .transcripcion { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>Consola de llamadas de preparación</h1>
+  <div class="sesion">
+    <input id="operador" placeholder="Su nombre (para las anotaciones)" autocomplete="name">
+    <input id="token" type="password" placeholder="Token de integración" autocomplete="off">
+    <button class="secundario" id="btn-guardar-sesion">Guardar</button>
+  </div>
+</header>
+<nav role="tablist">
+  <button role="tab" aria-selected="true" data-tab="nueva">Nueva llamada</button>
+  <button role="tab" aria-selected="false" data-tab="planilla">Planilla</button>
+  <button role="tab" aria-selected="false" data-tab="llamadas">Llamadas</button>
+</nav>
+<main>
+
+<!-- ───────────────────────── Nueva llamada ───────────────────────── -->
+<section role="tabpanel" id="tab-nueva">
+  <h2>Cargar un paciente por texto o voz</h2>
+  <p class="ayuda">Escriba o dicte los datos como los diría en voz alta. El sistema propone un borrador; usted lo revisa campo por campo y programa. Nada se programa sin su confirmación.</p>
+  <textarea id="texto" placeholder="Ej.: Paciente María Pérez, ficha 12345, teléfono 9 1111 1111, RUT termina en 4821. Endoscopía el 15 de abril, llega a las 7:30 con acompañante. Ayuno desde las 22 horas. Suspender el acenocumarol desde el lunes en la mañana, tres días antes. Traer hemograma y perfil de coagulación. Indica la Dra. Silva."></textarea>
+  <div class="fila">
+    <button class="secundario" id="btn-dictar">🎤 Dictar</button>
+    <span id="estado-dictado" class="oculto grabando">Escuchando… hable y pulse Detener</span>
+    <button class="accion" id="btn-interpretar">Interpretar</button>
+    <button class="secundario" id="btn-limpiar">Limpiar</button>
+  </div>
+  <div id="aviso-dictado" class="aviso neutro oculto">El dictado usa el reconocimiento de voz del navegador. Antes de usarlo con datos reales, confirme con Informática que ese servicio está autorizado para datos de pacientes.</div>
+  <div id="avisos-interpretar"></div>
+
+  <h3>Borrador</h3>
+  <form id="form" onsubmit="return false">
+    <div class="grilla">
+      <div class="campo"><label>ID paciente *</label><input name="idPaciente"></div>
+      <div class="campo"><label>Nombre *</label><input name="nombre"></div>
+      <div class="campo"><label>Teléfono *</label><input name="telefono" placeholder="+56911111111"></div>
+      <div class="campo"><label>RUT últimos 4 dígitos *</label><input name="rutUltimosCuatro" maxlength="4" inputmode="numeric"></div>
+      <div class="campo"><label>Fecha del procedimiento *</label><input name="fechaProcedimiento" type="date"></div>
+      <div class="campo"><label>Hora de llegada *</label><input name="horaLlegada" type="time"></div>
+      <div class="campo"><label>Hora de inicio del ayuno *</label><input name="horaInicioAyuno" type="time"></div>
+      <div class="campo"><label>Requiere acompañante *</label>
+        <select name="requiereAcompanante"><option value="">Sin definir</option><option value="si">Sí</option><option value="no">No</option></select></div>
+      <div class="campo"><label>Servicio</label><input name="servicio" placeholder="endoscopia, cirugia…"></div>
+      <div class="campo"><label>Emitida por *</label><input name="emitidaPor" placeholder="Dra. Silva"></div>
+      <div class="campo"><label>ID indicación</label><input name="idIndicacion" placeholder="se genera si falta"></div>
+      <div class="campo"><label>Programar para</label><input name="programadoPara" type="datetime-local"></div>
+    </div>
+    <div class="campo"><label>Exámenes requeridos (separados por ;)</label><input name="examenes" placeholder="hemograma; perfil de coagulación"></div>
+    <div class="campo">
+      <label>Fármacos a suspender. La instrucción se lee al paciente tal cual, es la que emitió el equipo tratante.</label>
+      <div id="farmacos"></div>
+      <button class="secundario" type="button" id="btn-agregar-farmaco">+ Agregar fármaco</button>
+    </div>
+    <div class="fila">
+      <label style="margin:0"><input type="checkbox" id="inmediata" style="width:auto" checked> Intentar llamar ahora</label>
+      <button class="secundario" type="button" id="btn-validar">Validar</button>
+      <button class="accion" type="button" id="btn-programar">Programar llamada</button>
+    </div>
+  </form>
+  <div id="resultado-programar"></div>
+</section>
+
+<!-- ───────────────────────── Planilla ───────────────────────── -->
+<section role="tabpanel" id="tab-planilla" class="oculto">
+  <h2>Cargar varios pacientes desde una planilla</h2>
+  <p class="ayuda">Descargue la plantilla, complétela y súbala. Cada fila se valida con las mismas reglas que el formulario. Solo las filas válidas se programan, y solo cuando usted lo confirme.</p>
+  <div class="fila">
+    <button class="secundario" id="btn-plantilla">Descargar plantilla .xlsx</button>
+    <input type="file" id="archivo" accept=".xlsx,.csv" style="width:auto">
+    <button class="accion" id="btn-subir">Validar planilla</button>
+  </div>
+  <div id="resumen-planilla"></div>
+  <div class="tabla" id="tabla-planilla"></div>
+  <div class="fila oculto" id="acciones-planilla">
+    <label style="margin:0"><input type="checkbox" id="inmediata-lote" style="width:auto"> Intentar llamar ahora a todas</label>
+    <button class="accion" id="btn-programar-lote">Programar filas válidas</button>
+  </div>
+  <div id="resultado-lote"></div>
+</section>
+
+<!-- ───────────────────────── Llamadas ───────────────────────── -->
+<section role="tabpanel" id="tab-llamadas" class="oculto">
+  <div id="lista-llamadas">
+    <h2>Llamadas</h2>
+    <p class="ayuda">Cada llamada tabulada: educación entregada, protocolo cumplido, información faltante. Pulse una fila para ver el detalle y la transcripción, y para completar lo que falte.</p>
+    <div class="fila">
+      <input id="filtro-paciente" placeholder="Filtrar por ID paciente" style="width:220px">
+      <button class="secundario" id="btn-refrescar">Actualizar</button>
+      <button class="secundario" id="btn-exportar">Exportar .xlsx</button>
+      <span id="conteo" class="chip"></span>
+    </div>
+    <div class="tabla" id="tabla-llamadas"></div>
+  </div>
+  <div id="detalle-llamada" class="oculto"></div>
+</section>
+
+</main>
+<script>
+(() => {
+  const $ = (s, r = document) => r.querySelector(s);
+  const $$ = (s, r = document) => [...r.querySelectorAll(s)];
+  const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+  // ---------------------------------------------------------------- sesión
+  const sesion = { token: '', operador: '' };
+  try { sesion.token = sessionStorage.getItem('token') || ''; sesion.operador = localStorage.getItem('operador') || ''; } catch {}
+  $('#token').value = sesion.token; $('#operador').value = sesion.operador;
+  $('#btn-guardar-sesion').onclick = () => {
+    sesion.token = $('#token').value.trim(); sesion.operador = $('#operador').value.trim();
+    try { sessionStorage.setItem('token', sesion.token); localStorage.setItem('operador', sesion.operador); } catch {}
+    mostrar($('#avisos-interpretar'), 'ok', 'Sesión guardada en este navegador.');
+  };
+
+  async function api(ruta, opciones = {}) {
+    const r = await fetch(ruta, { ...opciones, headers: { 'content-type': 'application/json', ...(sesion.token ? { authorization: `Bearer ${sesion.token}` } : {}), ...(opciones.headers || {}) } });
+    if (r.status === 401) throw new Error('No autorizado: revise el token de integración.');
+    const tipo = r.headers.get('content-type') || '';
+    if (tipo.includes('json')) { const j = await r.json(); if (!r.ok && j && j.error) throw Object.assign(new Error(j.error), { cuerpo: j }); return j; }
+    if (!r.ok) throw new Error(`Error ${r.status}`);
+    return r;
+  }
+  function mostrar(el, tipo, html) { el.innerHTML = `<div class="aviso ${tipo}">${html}</div>`; }
+
+  // ---------------------------------------------------------------- pestañas
+  $$('nav [role=tab]').forEach((b) => b.onclick = () => {
+    $$('nav [role=tab]').forEach((x) => x.setAttribute('aria-selected', String(x === b)));
+    $$('section[role=tabpanel]').forEach((s) => s.classList.toggle('oculto', s.id !== `tab-${b.dataset.tab}`));
+    if (b.dataset.tab === 'llamadas') cargarLlamadas();
+  });
+
+  // ---------------------------------------------------------------- dictado
+  const Reconocimiento = window.SpeechRecognition || window.webkitSpeechRecognition;
+  let rec = null;
+  $('#btn-dictar').onclick = () => {
+    if (!Reconocimiento) { mostrar($('#avisos-interpretar'), 'alerta', 'Este navegador no ofrece dictado. Use Chrome o Edge, o escriba el texto.'); return; }
+    if (rec) { rec.stop(); return; }
+    $('#aviso-dictado').classList.remove('oculto');
+    rec = new Reconocimiento();
+    rec.lang = 'es-CL'; rec.continuous = true; rec.interimResults = false;
+    const ta = $('#texto');
+    rec.onresult = (e) => { for (let i = e.resultIndex; i < e.results.length; i++) if (e.results[i].isFinal) ta.value = `${ta.value.trim()} ${e.results[i][0].transcript.trim()}`.trim(); };
+    rec.onend = () => { rec = null; $('#btn-dictar').textContent = '🎤 Dictar'; $('#estado-dictado').classList.add('oculto'); };
+    rec.onerror = (e) => mostrar($('#avisos-interpretar'), 'error', `Dictado interrumpido: ${esc(e.error)}`);
+    rec.start();
+    $('#btn-dictar').textContent = '■ Detener'; $('#estado-dictado').classList.remove('oculto');
+  };
+
+  // ---------------------------------------------------------------- formulario
+  const form = $('#form');
+  function leerFormulario() {
+    const f = new FormData(form);
+    const v = (k) => (f.get(k) || '').toString().trim();
+    const farmacos = $$('#farmacos .farmaco').map((d) => ({ nombre: $('[name=fnombre]', d).value.trim(), instruccion: $('[name=finstr]', d).value.trim() })).filter((x) => x.nombre || x.instruccion);
+    const acomp = v('requiereAcompanante');
+    return {
+      idPaciente: v('idPaciente'), nombre: v('nombre'), telefono: v('telefono'), rutUltimosCuatro: v('rutUltimosCuatro'),
+      fechaProcedimiento: v('fechaProcedimiento'), horaLlegada: v('horaLlegada'), horaInicioAyuno: v('horaInicioAyuno'),
+      farmacos, examenes: v('examenes').split(/[;,]/).map((x) => x.trim()).filter(Boolean),
+      requiereAcompanante: acomp === 'si' ? true : acomp === 'no' ? false : null,
+      servicio: v('servicio'), emitidaPor: v('emitidaPor'), idIndicacion: v('idIndicacion'), emitidaEn: '',
+      programadoPara: v('programadoPara') ? new Date(v('programadoPara')).toISOString() : '',
+    };
+  }
+  function escribirFormulario(b) {
+    for (const k of ['idPaciente', 'nombre', 'telefono', 'rutUltimosCuatro', 'fechaProcedimiento', 'horaLlegada', 'horaInicioAyuno', 'servicio', 'emitidaPor', 'idIndicacion']) form.elements[k].value = b[k] || '';
+    form.elements.requiereAcompanante.value = b.requiereAcompanante === true ? 'si' : b.requiereAcompanante === false ? 'no' : '';
+    form.elements.examenes.value = (b.examenes || []).join('; ');
+    $('#farmacos').innerHTML = '';
+    (b.farmacos || []).forEach(agregarFarmaco);
+  }
+  function agregarFarmaco(f = { nombre: '', instruccion: '' }) {
+    const d = document.createElement('div'); d.className = 'farmaco';
+    d.innerHTML = `<input name="fnombre" placeholder="nombre" value="${esc(f.nombre)}"><input name="finstr" placeholder="instrucción literal emitida por el equipo tratante" value="${esc(f.instruccion)}"><button type="button" class="secundario">Quitar</button>`;
+    $('button', d).onclick = () => d.remove();
+    $('#farmacos').appendChild(d);
+  }
+  $('#btn-agregar-farmaco').onclick = () => agregarFarmaco();
+  $('#btn-limpiar').onclick = () => { $('#texto').value = ''; escribirFormulario({}); $('#avisos-interpretar').innerHTML = ''; $('#resultado-programar').innerHTML = ''; };
+
+  $('#btn-interpretar').onclick = async () => {
+    const texto = $('#texto').value.trim();
+    if (!texto) return mostrar($('#avisos-interpretar'), 'alerta', 'Escriba o dicte algo primero.');
+    try {
+      const r = await api('/consola/api/interpretar', { method: 'POST', body: JSON.stringify({ texto, base: leerFormulario() }) });
+      escribirFormulario(r.borrador);
+      const partes = [];
+      partes.push(`<div class="aviso ${r.listo ? 'ok' : 'alerta'}">${r.listo ? 'El borrador está completo. Revíselo y programe.' : `Faltan: ${esc(r.faltantes.join(', '))}.`}</div>`);
+      for (const a of r.avisos) partes.push(`<div class="aviso alerta">${esc(a)}</div>`);
+      for (const e of r.errores) partes.push(`<div class="aviso error">${esc(e)}</div>`);
+      partes.push(`<div class="aviso neutro">Interpretado por ${r.origen}. Es una propuesta: usted decide.</div>`);
+      $('#avisos-interpretar').innerHTML = partes.join('');
+    } catch (e) { mostrar($('#avisos-interpretar'), 'error', esc(e.message)); }
+  };
+
+  $('#btn-validar').onclick = async () => {
+    try {
+      const r = await api('/consola/api/validar', { method: 'POST', body: JSON.stringify({ borrador: leerFormulario() }) });
+      escribirFormulario(r.borrador);
+      mostrar($('#resultado-programar'), r.ok ? 'ok' : 'alerta', r.ok ? 'Válido. Puede programar.' : esc([...r.faltantes.map((f) => `Falta ${f}`), ...r.errores].join(' · ')));
+    } catch (e) { mostrar($('#resultado-programar'), 'error', esc(e.message)); }
+  };
+
+  $('#btn-programar').onclick = async () => {
+    const b = leerFormulario();
+    try {
+      const v = await api('/consola/api/validar', { method: 'POST', body: JSON.stringify({ borrador: b }) });
+      if (!v.ok) return mostrar($('#resultado-programar'), 'alerta', esc([...v.faltantes.map((f) => `Falta ${f}`), ...v.errores].join(' · ')));
+      if (!confirm(`Programar la llamada a ${v.borrador.nombre} (${v.borrador.telefono}) para el procedimiento del ${v.borrador.fechaProcedimiento}, indicación de ${v.borrador.emitidaPor}?`)) return;
+      const r = await api('/llamadas/lote', { method: 'POST', body: JSON.stringify({ borradores: [v.borrador], inmediata: $('#inmediata').checked }) });
+      const x = r.resultados[0];
+      if (x.ok) {
+        mostrar($('#resultado-programar'), 'ok', `Llamada programada. ID <code>${esc(x.idTrabajo)}</code>. ${r.despacho.intentado ? (r.despacho.despachados > 0 ? 'Se originó ahora.' : 'Quedó en cola: fuera de ventana horaria o sin capacidad.') : 'Quedó en cola.'}`);
+      } else mostrar($('#resultado-programar'), 'error', esc(x.error));
+    } catch (e) { mostrar($('#resultado-programar'), 'error', esc(e.message)); }
+  };
+
+  // ---------------------------------------------------------------- planilla
+  let filasValidas = [];
+  $('#btn-plantilla').onclick = async () => {
+    try {
+      const r = await api('/consola/api/plantilla');
+      const blob = await r.blob(); const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'plantilla-llamadas.xlsx'; a.click();
+    } catch (e) { mostrar($('#resumen-planilla'), 'error', esc(e.message)); }
+  };
+  $('#btn-subir').onclick = async () => {
+    const f = $('#archivo').files[0];
+    if (!f) return mostrar($('#resumen-planilla'), 'alerta', 'Elija un archivo .xlsx o .csv.');
+    const base64 = await new Promise((res, rej) => { const fr = new FileReader(); fr.onload = () => res(fr.result.split(',')[1]); fr.onerror = rej; fr.readAsDataURL(f); });
+    try {
+      const r = await api('/consola/api/planilla', { method: 'POST', body: JSON.stringify({ nombre: f.name, base64 }) });
+      filasValidas = r.filas.filter((x) => x.ok).map((x) => x.borrador);
+      mostrar($('#resumen-planilla'), r.validas === r.total ? 'ok' : 'alerta', `${r.validas} de ${r.total} filas válidas.${r.columnasIgnoradas.length ? ` Columnas ignoradas: ${esc(r.columnasIgnoradas.join(', '))}.` : ''}`);
+      $('#tabla-planilla').innerHTML = `<table><thead><tr><th>Fila</th><th>ID paciente</th><th>Nombre</th><th>Teléfono</th><th>Procedimiento</th><th>Estado</th><th>Detalle</th></tr></thead><tbody>${r.filas.map((x) => `<tr><td>${x.fila}</td><td>${esc(x.borrador.idPaciente)}</td><td>${esc(x.borrador.nombre)}</td><td>${esc(x.borrador.telefono)}</td><td>${esc(x.borrador.fechaProcedimiento)}</td><td><span class="chip ${x.ok ? 'ok' : 'error'}">${x.ok ? 'válida' : 'inválida'}</span></td><td>${esc([...x.faltantes.map((y) => `Falta ${y}`), ...x.errores].join(' · '))}</td></tr>`).join('')}</tbody></table>`;
+      $('#acciones-planilla').classList.toggle('oculto', filasValidas.length === 0);
+      $('#resultado-lote').innerHTML = '';
+    } catch (e) { mostrar($('#resumen-planilla'), 'error', esc(e.message)); }
+  };
+  $('#btn-programar-lote').onclick = async () => {
+    if (!filasValidas.length) return;
+    if (!confirm(`Programar ${filasValidas.length} llamadas?`)) return;
+    try {
+      const r = await api('/llamadas/lote', { method: 'POST', body: JSON.stringify({ borradores: filasValidas, inmediata: $('#inmediata-lote').checked }) });
+      mostrar($('#resultado-lote'), r.rechazadas ? 'alerta' : 'ok', `${r.programadas} programadas, ${r.rechazadas} rechazadas.${r.despacho.intentado ? ` Originadas ahora: ${r.despacho.despachados}.` : ''}`);
+      filasValidas = []; $('#acciones-planilla').classList.add('oculto');
+    } catch (e) { mostrar($('#resultado-lote'), 'error', esc(e.message)); }
+  };
+
+  // ---------------------------------------------------------------- llamadas
+  const chipEstado = (e) => `<span class="chip ${e === 'terminada' ? 'ok' : e === 'en_curso' || e === 'programada' ? '' : 'error'}">${esc(e.replace('_', ' '))}</span>`;
+  async function cargarLlamadas() {
+    try {
+      const q = $('#filtro-paciente').value.trim();
+      const r = await api(`/informes/llamadas?limite=300${q ? `&idPaciente=${encodeURIComponent(q)}` : ''}`);
+      $('#conteo').textContent = `${r.total} llamadas`;
+      $('#tabla-llamadas').innerHTML = `<table><thead><tr><th>Paciente</th><th>Procedimiento</th><th>Estado</th><th>Desenlace</th><th>Educación</th><th>Protocolo</th><th>Faltante</th><th>Revisión</th></tr></thead><tbody>${r.llamadas.map((l) => `<tr class="clic" data-id="${esc(l.id)}"><td><strong>${esc(l.nombre)}</strong><br><small>${esc(l.idPaciente)}</small></td><td>${esc(l.fechaProcedimiento)}<br><small>${esc(l.servicio)}</small></td><td>${chipEstado(l.estado)}</td><td>${esc(l.resumen)}</td><td>${esc(l.educacionConfirmada)} confirmada<br><small>${esc(l.educacionEntregada)} entregada</small></td><td>${l.protocoloCumplido === '' ? '' : `<span class="chip ${l.protocoloCumplido === 'sí' ? 'ok' : 'alerta'}">${esc(l.criteriosCumplidos)}</span>`}</td><td>${l.faltantes ? `<span class="chip alerta">pendiente</span>` : l.faltantesCompletados ? `<span class="chip ok">completado</span>` : ''}</td><td>${l.requiereRevision === 'sí' ? (l.revisadoEn ? '<span class="chip ok">revisada</span>' : '<span class="chip error">requiere</span>') : ''}</td></tr>`).join('')}</tbody></table>`;
+      $$('#tabla-llamadas tr.clic').forEach((tr) => tr.onclick = () => verDetalle(tr.dataset.id));
+    } catch (e) { $('#tabla-llamadas').innerHTML = `<div class="aviso error">${esc(e.message)}</div>`; }
+  }
+  $('#btn-refrescar').onclick = cargarLlamadas;
+  $('#filtro-paciente').onkeydown = (e) => { if (e.key === 'Enter') cargarLlamadas(); };
+  $('#btn-exportar').onclick = async () => {
+    try { const r = await api('/informes/llamadas.xlsx'); const blob = await r.blob(); const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'llamadas.xlsx'; a.click(); }
+    catch (e) { $('#tabla-llamadas').insertAdjacentHTML('afterbegin', `<div class="aviso error">${esc(e.message)}</div>`); }
+  };
+
+  const TITULOS = { acompanante_confirmado: 'Acompañante', examenes_faltantes: 'Exámenes', farmacos_no_confirmados: 'Fármacos', hora_ayuno_repetida: 'Hora de ayuno', educacion_reforzada: 'Educación reforzada', contacto_manual: 'Contacto manual', telefono_alternativo: 'Teléfono alternativo', observacion: 'Observación', verificacion_manual: 'Verificación manual' };
+  const chipConf = (c) => `<span class="chip ${c === 'si' ? 'ok' : c === 'no' ? 'error' : ''}">${c === 'si' ? 'confirmado' : c === 'no' ? 'no confirmado' : 'sin determinar'}</span>`;
+  const chipVer = (v) => `<span class="chip ${v === 'cumplido' ? 'ok' : v === 'no_cumplido' ? 'error' : 'alerta'}">${esc(v.replace('_', ' '))}</span>`;
+
+  async function verDetalle(id) {
+    let i;
+    try { i = await api(`/llamadas/${encodeURIComponent(id)}/informe`); } catch (e) { return mostrar($('#tabla-llamadas'), 'error', esc(e.message)); }
+    pintarDetalle(i);
+  }
+  function pintarDetalle(i) {
+    $('#lista-llamadas').classList.add('oculto'); const d = $('#detalle-llamada'); d.classList.remove('oculto');
+    d.innerHTML = `
+      <div class="detalle-cab"><button class="volver" id="btn-volver">← Volver</button><h2>${esc(i.nombre)} · ${esc(i.idPaciente)}</h2>${chipEstado(i.estado)}<span class="chip">${esc(i.fechaProcedimiento)}${i.servicio ? ` · ${esc(i.servicio)}` : ''}</span><span class="chip">indica ${esc(i.emitidaPor)}</span></div>
+      <p class="ayuda">${esc(i.resumen)} <small>ID <code>${esc(i.id)}</code> · ${esc(i.telefono)}</small></p>
+
+      <h3>Educación entregada</h3>
+      <div class="tabla"><table><thead><tr><th>Bloque</th><th>Entregado</th><th>Confirmado</th><th>Detalle</th></tr></thead><tbody>
+      ${i.educacion.map((b) => `<tr><td>${esc(b.titulo)}</td><td>${b.entregado ? '<span class="chip ok">sí</span>' : '<span class="chip">no</span>'}</td><td>${chipConf(b.confirmado)}</td><td>${esc(b.detalle)}</td></tr>`).join('')}
+      </tbody></table></div>
+
+      <h3>Protocolo ${i.protocolo.total ? `· ${i.protocolo.cumplidos}/${i.protocolo.total} criterios` : '· sin resultado'}</h3>
+      ${i.protocolo.total ? `<div class="tabla"><table><thead><tr><th>Criterio</th><th>Veredicto</th><th>Justificación</th></tr></thead><tbody>${i.protocolo.criterios.map((c) => `<tr><td>${esc(c.titulo)}</td><td>${chipVer(c.veredicto)}</td><td>${esc(c.justificacion)}</td></tr>`).join('')}</tbody></table></div>
+      <div class="fila">${i.protocolo.requiereRevision ? (i.protocolo.revisadoEn ? `<span class="chip ok">revisada el ${esc(i.protocolo.revisadoEn.slice(0, 16).replace('T', ' '))}</span>` : `<span class="chip error">requiere revisión humana</span><button class="secundario" id="btn-revisar">Marcar como revisada</button>`) : '<span class="chip ok">no requiere revisión</span>'}</div>` : `<div class="aviso neutro">${esc(i.detalle)}</div>`}
+
+      <h3>Información faltante</h3>
+      ${i.faltantes.length ? i.faltantes.map((f, n) => `<div class="aviso ${f.completado ? 'ok' : 'alerta'}"><strong>${esc(TITULOS[f.campo] || f.campo)}.</strong> ${esc(f.descripcion)}${f.completado ? `<br><small>Completado por ${esc(f.completado.autor)} el ${esc(f.completado.creadoEn.slice(0, 16).replace('T', ' '))}: <strong>${esc(f.completado.valor)}</strong>${f.completado.nota ? ` · ${esc(f.completado.nota)}` : ''}</small>` : ''}<div class="fila"><input data-campo="${esc(f.campo)}" data-n="${n}" placeholder="Valor (ej.: confirmado por teléfono con la hija)" style="max-width:420px"><input data-nota="${n}" placeholder="Nota (opcional)" style="max-width:300px"><button class="secundario" data-anotar="${n}">Guardar</button></div></div>`).join('') : '<div class="aviso ok">No hay información faltante.</div>'}
+      <div class="fila"><select id="campo-libre" style="max-width:240px">${Object.entries(TITULOS).filter(([k]) => k !== 'verificacion_manual').map(([k, v]) => `<option value="${k}">${esc(v)}</option>`).join('')}</select><input id="valor-libre" placeholder="Agregar otra anotación" style="max-width:420px"><button class="secundario" id="btn-anotar-libre">Guardar</button></div>
+      ${i.anotaciones.length ? `<h3>Anotaciones</h3><ul>${i.anotaciones.map((a) => `<li><strong>${esc(TITULOS[a.campo] || a.campo)}:</strong> ${esc(a.valor)}${a.nota ? ` · ${esc(a.nota)}` : ''} <small>(${esc(a.autor)}, ${esc(a.creadoEn.slice(0, 16).replace('T', ' '))})</small></li>`).join('')}</ul>` : ''}
+
+      <h3>Transcripción · ${i.transcripcion.length} turnos</h3>
+      ${i.transcripcion.length ? `<div class="transcripcion">${i.transcripcion.map((t) => `${t.paciente ? `<div class="quien">Paciente</div><div class="paciente">${esc(t.paciente)}</div>` : ''}${t.agente ? `<div class="quien">Agente</div><div class="agente">${esc(t.agente)}${t.guardrail ? ` <span class="chip alerta">${esc(t.guardrail)}</span>` : ''}</div>` : ''}`).join('')}</div>` : '<div class="aviso neutro">Sin turnos registrados.</div>'}
+      <p class="ayuda"><small>La transcripción es la traza de auditoría: lo que dijo el paciente y lo que pronunció el agente, turno por turno. Se muestra solo a quien tiene el token de integración.</small></p>`;
+    $('#btn-volver').onclick = () => { d.classList.add('oculto'); $('#lista-llamadas').classList.remove('oculto'); cargarLlamadas(); };
+    const anotar = async (campo, valor, nota) => {
+      if (!sesion.operador) return alert('Escriba su nombre arriba y pulse Guardar: las anotaciones llevan autor.');
+      if (!valor) return;
+      try { const r = await api(`/llamadas/${encodeURIComponent(i.id)}/anotaciones`, { method: 'POST', body: JSON.stringify({ campo, valor, nota, autor: sesion.operador }) }); pintarDetalle(r.informe); }
+      catch (e) { alert(e.message); }
+    };
+    $$('[data-anotar]', d).forEach((b) => b.onclick = () => { const n = b.dataset.anotar; anotar($(`[data-n="${n}"]`, d).dataset.campo, $(`[data-n="${n}"]`, d).value.trim(), $(`[data-nota="${n}"]`, d).value.trim()); });
+    $('#btn-anotar-libre').onclick = () => anotar($('#campo-libre').value, $('#valor-libre').value.trim(), '');
+    const br = $('#btn-revisar'); if (br) br.onclick = async () => {
+      if (!sesion.operador) return alert('Escriba su nombre arriba y pulse Guardar.');
+      try { const r = await api(`/llamadas/${encodeURIComponent(i.id)}/revisar`, { method: 'POST', body: JSON.stringify({ revisor: sesion.operador }) }); pintarDetalle(r.informe); } catch (e) { alert(e.message); }
+    };
+  }
+})();
+</script>
+</body>
+</html>

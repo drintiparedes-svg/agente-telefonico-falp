@@ -4,6 +4,7 @@ import type { Config } from '../config/index.js';
 import { MOTIVOS_ENRUTAMIENTO } from '../dominio/tipos.js';
 import { abrirDB, type DB } from '../persistencia/db.js';
 import {
+  crearRepoAnotaciones,
   crearRepoAuditoria,
   crearRepoCola,
   crearRepoDestinos,
@@ -21,6 +22,8 @@ import { reglasParaAgente, resolverDestino } from '../telefonia/transferencias.j
 import { compararAgente, cuerpoAgente, type DefinicionAgente } from '../telefonia/agente.js';
 import { conciliar } from '../conciliacion/conciliar.js';
 import { resumirLlamada } from './estado-llamada.js';
+import { registrarConsola } from '../consola/rutas.js';
+import { crearInterprete } from '../consola/interpretar.js';
 
 /**
  * Rutas que tratan datos de pacientes y que usan los sistemas clientes. Con
@@ -28,7 +31,7 @@ import { resumirLlamada } from './estado-llamada.js';
  * rutas tienen su propia autenticación (/v1, /webhooks, /admin, /tareas) o son
  * públicas por diseño (/salud).
  */
-export const RUTAS_DE_INTEGRACION = ['/llamadas', '/auditoria', '/revision', '/conciliacion'] as const;
+export const RUTAS_DE_INTEGRACION = ['/llamadas', '/auditoria', '/revision', '/conciliacion', '/informes', '/consola/api'] as const;
 
 export function esRutaDeIntegracion(url: string): boolean {
   const ruta = url.split('?')[0] ?? '';
@@ -196,6 +199,7 @@ export function construirServicio(cfg: Config, clienteVoz?: ClienteVoz, opciones
   const sesiones = crearRepoSesiones(db);
   const numeros = crearRepoNumeros(db);
   const destinos = crearRepoDestinos(db);
+  const anotaciones = crearRepoAnotaciones(db);
 
   // Con clave se usa la plataforma real. El agente puede venir por id o
   // resolverse por nombre en /admin/agente; para originar llamadas hace falta
@@ -236,7 +240,8 @@ export function construirServicio(cfg: Config, clienteVoz?: ClienteVoz, opciones
   }
 
   const app = Fastify({
-    bodyLimit: 2 * 1024 * 1024,
+    // Una planilla de pacientes viaja en base64 dentro del JSON; 12 MB dan para miles de filas.
+    bodyLimit: 12 * 1024 * 1024,
     logger: {
       level: cfg.NIVEL_LOG,
       // El contenido de las conversaciones no se escribe en el log de aplicación:
@@ -342,6 +347,18 @@ export function construirServicio(cfg: Config, clienteVoz?: ClienteVoz, opciones
     const t = trabajos.porId(id);
     if (!t) return reply.code(404).send({ error: 'No hay ninguna llamada con ese identificador.' });
     return resumirLlamada(t, resultados.porLlamada(id));
+  });
+
+  // Consola del equipo: carga por texto o voz, planilla, informe tabulado y
+  // anotaciones. Sus rutas de datos van detrás de INTEGRACION_TOKEN.
+  registrarConsola(app, {
+    interprete: crearInterprete(cfg),
+    despachador,
+    trabajos,
+    resultados,
+    auditoria,
+    anotaciones,
+    ...(opciones.reloj ? { reloj: opciones.reloj } : {}),
   });
 
   app.get('/auditoria/:idLlamada', async (req) => {

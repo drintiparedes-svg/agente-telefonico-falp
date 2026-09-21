@@ -65,7 +65,7 @@ Están implementados como código y cubiertos por pruebas con umbral del 100 %.
 
 ```bash
 npm install
-npm test                  # 139 pruebas, sin red
+npm test                  # 163 pruebas, sin red
 npm run simular -- alarma # recorre un escenario completo en consola
 npm run dev               # servicio en :8080
 npm run aprovisionar      # crea o reescribe el agente en la plataforma de voz
@@ -100,6 +100,11 @@ repite    el paciente pide repetir la indicación
 | `GET` | `/auditoria/:idLlamada` | Traza completa de una llamada, transición por transición |
 | `GET` | `/conciliacion` | Llamadas originadas sin resultado recibido |
 | `GET` | `/salud` | Estado del servicio y profundidad de la cola |
+| `GET` | `/consola` | Consola del equipo: carga por texto, voz o planilla, e informe tabulado de cada llamada. Ver [`docs/consola.md`](docs/consola.md) |
+| `POST` | `/llamadas/lote` | Programa varios borradores validados con las mismas reglas que `/llamadas` |
+| `GET` | `/informes/llamadas` | Tabla: educación entregada, protocolo cumplido, información faltante. También `.xlsx` |
+| `GET` | `/llamadas/:id/informe` | Detalle con transcripción, criterios, faltantes y anotaciones |
+| `POST` | `/llamadas/:id/anotaciones` | Una persona completa información faltante, con autor y fecha |
 | `GET` | `/admin/numeros` | Grupo de números de salida y su ocupación. Requiere `ADMIN_TOKEN` |
 | `POST` | `/admin/numeros/sincronizar` | Lee los números importados en la plataforma. Los nuevos quedan inactivos |
 | `PATCH` | `/admin/numeros/:id` | Activa, desactiva o cambia el techo de un número |
@@ -130,6 +135,7 @@ src/
   llm/
     clasificador.ts  Único punto donde interviene un modelo. Solo clasifica.
     servidor.ts      Endpoint compatible OpenAI con SSE.
+  consola/           Consola del equipo: intérprete de texto, planilla, informe y página.
   telefonia/         Cliente de voz, definición del agente, grupo de números,
                      despachador y transferencias.
   webhooks/          Recepción firmada y cola durable.

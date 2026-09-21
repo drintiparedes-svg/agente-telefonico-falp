@@ -109,3 +109,18 @@ CREATE TABLE IF NOT EXISTS destinos_transferencia (
   creado_en          TEXT NOT NULL,
   actualizado_en     TEXT NOT NULL
 );
+
+-- Anotaciones: información que una persona del equipo agrega después de la
+-- llamada (un dato que el paciente no confirmó, un contacto manual, una
+-- observación). Nunca sobrescribe lo que dijo el paciente: se guarda aparte,
+-- con autor y fecha, y el informe muestra ambas cosas.
+CREATE TABLE IF NOT EXISTS anotaciones (
+  id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+  id_llamada         TEXT NOT NULL,
+  campo              TEXT NOT NULL,
+  valor              TEXT NOT NULL,
+  nota               TEXT NOT NULL DEFAULT '',
+  autor              TEXT NOT NULL,
+  creado_en          TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_anotaciones_llamada ON anotaciones (id_llamada, id);
