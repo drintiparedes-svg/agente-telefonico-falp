@@ -15,6 +15,8 @@ import {
 } from '../tipos.js';
 import { evaluarGuardrails, verificarContenidoCerrado, type Veredicto } from '../guardrails/index.js';
 import { guion, todasLasLineas } from './guion.js';
+import { coincideDiaMes, coincideDigitos, coincideHora, extraerHoraDicha, formatearHora } from './numeros.js';
+import { componerConPausa, lineasConPausa } from './pausas.js';
 
 export interface EstadoLlamada {
   idLlamada: string;
@@ -82,11 +84,46 @@ export function abrir(ctx: ContextoLlamada, st: EstadoLlamada): ResultadoPaso {
   return { estado: nuevo, salida, transferir: false, terminar: false };
 }
 
+export interface OpcionesTurno {
+  /**
+   * Expresión de pausa que el agente ya pronunció (o va a pronunciar) antes de
+   * la línea de este turno. Se antepone a la salida y queda en la auditoría
+   * como parte literal de lo que oyó el paciente. Ver pausas.ts.
+   */
+  expresionPausa?: string;
+}
+
 /**
  * Avanza un turno. Recibe lo que dijo el paciente y su clasificación.
  * Devuelve el nuevo estado y la línea a pronunciar.
  */
 export function avanzar(
+  ctx: ContextoLlamada,
+  st: EstadoLlamada,
+  entradaPaciente: string,
+  cls: Clasificacion,
+  opciones: OpcionesTurno = {},
+): ResultadoPaso {
+  const r = avanzarSinPausa(ctx, st, entradaPaciente, cls);
+  return anteponerPausa(r, opciones.expresionPausa ?? '');
+}
+
+/**
+ * Antepone la expresión de pausa a la salida del turno y a la entrada de
+ * auditoría que ese turno acaba de registrar, para que ambas digan lo mismo.
+ */
+function anteponerPausa(r: ResultadoPaso, expresion: string): ResultadoPaso {
+  if (expresion === '' || r.salida === '') return r;
+  const salida = componerConPausa(expresion, r.salida);
+  const auditoria = [...r.estado.auditoria];
+  const ultimo = auditoria.at(-1);
+  if (ultimo && ultimo.salidaAgente === r.salida) {
+    auditoria[auditoria.length - 1] = { ...ultimo, salidaAgente: salida };
+  }
+  return { ...r, salida, estado: { ...r.estado, auditoria } };
+}
+
+function avanzarSinPausa(
   ctx: ContextoLlamada,
   st: EstadoLlamada,
   entradaPaciente: string,
@@ -152,11 +189,13 @@ function transicion(
       if (cls.intencion !== 'responde_dato') {
         return reintentar(ctx, st, entrada, 'No se obtuvo el dato de verificación.');
       }
-      const esperado =
+      // Lo dicho puede venir en cifras o en palabras; se compara como número.
+      const dicho = cls.valorLiteral || entrada;
+      const coincide =
         st.factoresConfirmados === 0
-          ? ctx.verificacion.rutUltimosCuatro
-          : ctx.verificacion.diaMesProcedimiento;
-      if (!coincideFactor(cls.valorLiteral, esperado)) {
+          ? coincideDigitos(dicho, ctx.verificacion.rutUltimosCuatro)
+          : coincideDiaMes(dicho, ctx.verificacion.diaMesProcedimiento);
+      if (!coincide) {
         const salida = guion.verificacionFallida();
         return terminarCon(st, 'terminada_sin_verificar', `Factor de verificación incorrecto (posición ${st.factoresConfirmados + 1}).`, entrada, salida, 'compuerta_identidad');
       }
@@ -176,9 +215,9 @@ function transicion(
 
     case 'ayuno': {
       // Se exige que el paciente REPITA la hora. Un "sí" no cuenta como comprensión.
-      const repetida = extraerHora(cls.valorLiteral || entrada);
-      if (repetida && repetida === ctx.indicacion.horaInicioAyuno) {
-        const s = { ...st, intentosAclaracion: 0, capturado: { ...st.capturado, horaAyunoRepetida: repetida } };
+      // «A las diez» vale por 22:00 en un ayuno nocturno; «diez de la mañana» no.
+      if (coincideHora(cls.valorLiteral || entrada, ctx.indicacion.horaInicioAyuno)) {
+        const s = { ...st, intentosAclaracion: 0, capturado: { ...st.capturado, horaAyunoRepetida: ctx.indicacion.horaInicioAyuno } };
         return siguienteBloqueTrasAyuno(ctx, s, entrada);
       }
       if (st.intentosAclaracion >= 1) {
@@ -402,19 +441,10 @@ function registrar(
   return { ...st, auditoria: [...st.auditoria, evento] };
 }
 
-/** Normaliza y compara un factor de verificación. Tolerante a espacios y separadores. */
-function coincideFactor(dicho: string, esperado: string): boolean {
-  const limpiar = (s: string) => s.replace(/[^0-9]/g, '');
-  const a = limpiar(dicho);
-  const b = limpiar(esperado);
-  return a.length > 0 && a === b;
-}
-
-/** Extrae una hora HH:MM de un texto. No infiere: si no hay hora explícita devuelve ''. */
+/** Extrae una hora HH:MM de un texto, en cifras o en palabras. Sin hora reconocible devuelve ''. */
 export function extraerHora(texto: string): string {
-  const m = texto.match(/\b([01]?\d|2[0-3])\s*[:.]\s*([0-5]\d)\b/);
-  if (m && m[1] && m[2]) return `${m[1].padStart(2, '0')}:${m[2]}`;
-  return '';
+  const h = extraerHoraDicha(texto);
+  return h ? formatearHora(h) : '';
 }
 
 /**
@@ -423,5 +453,7 @@ export function extraerHora(texto: string): string {
  */
 export function validarSalida(ctx: ContextoLlamada, salida: string): { valida: boolean; motivo: string } {
   if (salida === '') return { valida: true, motivo: '' };
-  return verificarContenidoCerrado(salida, todasLasLineas(ctx));
+  // La lista blanca admite cada línea sola o precedida por una expresión de
+  // pausa del conjunto cerrado. Nada más.
+  return verificarContenidoCerrado(salida, lineasConPausa(todasLasLineas(ctx)));
 }

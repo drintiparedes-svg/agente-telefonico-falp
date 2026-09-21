@@ -12,8 +12,12 @@
  *  4. Sin número de salida activo no se despacha. Los trabajos esperan en la cola.
  */
 import { randomUUID } from 'node:crypto';
+import { z } from 'zod';
 import { estadoInicial } from '../dominio/checklist/maquina.js';
 import { ContextoLlamada } from '../dominio/tipos.js';
+
+/** Al programar, el identificador de llamada es opcional: si falta se genera. */
+const ContextoAProgramar = ContextoLlamada.extend({ idLlamada: z.string().min(1).optional() });
 import type { ClienteVoz } from './elevenlabs.js';
 import { capacidadLibre, elegirNumero } from './numeros.js';
 import type { crearRepoNumeros, crearRepoSesiones, crearRepoTrabajos } from '../persistencia/repositorios.js';
@@ -56,16 +60,20 @@ const esperarReal = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 export function crearDespachador(deps: DepsDespachador) {
   const esperar = deps.esperar ?? esperarReal;
   const pausa = Math.ceil(1000 / deps.llamadasPorSegundo);
+  // Los lotes se serializan: el ritmo de llamadas por segundo es por cuenta de
+  // Twilio, no por lote, y una programación «inmediata» corre en el hilo de la
+  // petición mientras el temporizador corre el suyo.
+  let turno: Promise<unknown> = Promise.resolve();
 
-  return {
+  const despachador = {
     /** Programa una llamada. Valida la indicación antes de aceptarla en la cola. */
     programar(p: {
       idPaciente: string;
       telefono: string;
       contexto: unknown;
       programadoPara?: string;
-    }): { ok: boolean; idTrabajo: string | null; error: string | null } {
-      const c = ContextoLlamada.safeParse(p.contexto);
+    }): { ok: boolean; idTrabajo: string | null; error: string | null; duplicado?: boolean } {
+      const c = ContextoAProgramar.safeParse(p.contexto);
       if (!c.success) {
         return {
           ok: false,
@@ -77,6 +85,9 @@ export function crearDespachador(deps: DepsDespachador) {
         return { ok: false, idTrabajo: null, error: 'La indicación no tiene profesional emisor. No es lícito comunicarla.' };
       }
       const id = c.data.idLlamada || randomUUID();
+      if (deps.trabajos.porId(id)) {
+        return { ok: false, idTrabajo: id, error: `Ya existe una llamada con idLlamada ${id}.`, duplicado: true };
+      }
       deps.trabajos.encolar({
         id,
         idPaciente: p.idPaciente,
@@ -87,8 +98,15 @@ export function crearDespachador(deps: DepsDespachador) {
       return { ok: true, idTrabajo: id, error: null };
     },
 
-    /** Toma los trabajos vencidos que caben en la capacidad libre y los origina. */
-    async despacharLote(ahora: Date = new Date()): Promise<{ despachados: number; omitidos: number; fallidos: number }> {
+    /** Toma los trabajos vencidos que caben en la capacidad libre y los origina. Un lote a la vez. */
+    despacharLote(ahora: Date = new Date()): Promise<{ despachados: number; omitidos: number; fallidos: number }> {
+      const p = turno.then(() => ejecutarLote(ahora));
+      turno = p.catch(() => undefined);
+      return p;
+    },
+  };
+
+  async function ejecutarLote(ahora: Date): Promise<{ despachados: number; omitidos: number; fallidos: number }> {
       const vacio = { despachados: 0, omitidos: 0, fallidos: 0 };
       if (!dentroDeVentana(ahora)) {
         deps.log.info({ hora: ahora.toISOString() }, 'Fuera de ventana horaria: no se despacha');
@@ -166,6 +184,7 @@ export function crearDespachador(deps: DepsDespachador) {
       }
 
       return { despachados, omitidos, fallidos };
-    },
-  };
+  }
+
+  return despachador;
 }

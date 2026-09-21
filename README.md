@@ -65,9 +65,10 @@ Están implementados como código y cubiertos por pruebas con umbral del 100 %.
 
 ```bash
 npm install
-npm test                  # 47 pruebas, sin red
+npm test                  # 163 pruebas, sin red
 npm run simular -- alarma # recorre un escenario completo en consola
 npm run dev               # servicio en :8080
+npm run aprovisionar      # crea o reescribe el agente en la plataforma de voz
 ```
 
 El servicio arranca sin credenciales: usa un clasificador determinista por reglas
@@ -91,19 +92,31 @@ repite    el paciente pide repetir la indicación
 
 | Método | Ruta | Para qué |
 |---|---|---|
-| `POST` | `/llamadas` | El sistema clínico empuja una indicación ya emitida y programa la llamada |
+| `POST` | `/llamadas` | El sistema clínico empuja una indicación ya emitida y programa la llamada. Con `inmediata` intenta originarla en el acto |
+| `GET` | `/llamadas/:id` | En qué está una llamada y, si terminó, su desenlace. Sin lo que dijo el paciente. Ver [`docs/integracion.md`](docs/integracion.md) |
 | `POST` | `/v1/chat/completions` | Lo invoca la plataforma de voz en cada turno. Es la máquina de estados vestida de LLM |
 | `POST` | `/webhooks/postcall` | Recibe el cierre de llamada. Verifica HMAC y encola antes de procesar |
 | `GET` | `/revision` | Cola de revisión humana. Es la bandeja del equipo clínico |
 | `GET` | `/auditoria/:idLlamada` | Traza completa de una llamada, transición por transición |
 | `GET` | `/conciliacion` | Llamadas originadas sin resultado recibido |
 | `GET` | `/salud` | Estado del servicio y profundidad de la cola |
+| `GET` | `/consola` | Consola del equipo: carga por texto, voz o planilla, e informe tabulado de cada llamada. Ver [`docs/consola.md`](docs/consola.md) |
+| `POST` | `/llamadas/lote` | Programa varios borradores validados con las mismas reglas que `/llamadas` |
+| `GET` | `/informes/llamadas` | Tabla: educación entregada, protocolo cumplido, información faltante. También `.xlsx` |
+| `GET` | `/llamadas/:id/informe` | Detalle con transcripción, criterios, faltantes y anotaciones |
+| `POST` | `/llamadas/:id/anotaciones` | Una persona completa información faltante, con autor y fecha |
 | `GET` | `/admin/numeros` | Grupo de números de salida y su ocupación. Requiere `ADMIN_TOKEN` |
 | `POST` | `/admin/numeros/sincronizar` | Lee los números importados en la plataforma. Los nuevos quedan inactivos |
 | `PATCH` | `/admin/numeros/:id` | Activa, desactiva o cambia el techo de un número |
 | `GET` | `/admin/destinos` | Destinos de transferencia y número de respaldo |
 | `PUT` | `/admin/destinos/:id` | Crea o cambia un destino por motivo, servicio y horario |
-| `POST` | `/admin/agente/sincronizar` | Escribe los destinos en las reglas de transferencia del agente |
+| `GET` | `/admin/agente` | Compara el agente de la plataforma con la definición de este servicio. Lista cambios manuales |
+| `POST` | `/admin/agente/sincronizar` | Reescribe la definición completa del agente: LLM propio, voz y fondo, privacidad, herramientas y reglas |
+| `POST` | `/admin/agente/sincronizar-destinos` | Solo las reglas de transferencia. Más barato tras cambiar un destino |
+
+Las rutas `/llamadas`, `/auditoria`, `/revision` y `/conciliacion` tratan datos
+de pacientes y exigen `Authorization: Bearer <INTEGRACION_TOKEN>`. En
+producción el servicio no arranca sin ese token.
 
 ---
 
@@ -115,13 +128,16 @@ src/
     tipos.ts         Esquemas. Una indicación incompleta no pasa de aquí.
     checklist/
       guion.ts       TODAS las líneas que el agente puede pronunciar.
+      pausas.ts      Expresiones neutras de pausa. Conjunto cerrado y determinista.
       maquina.ts     Máquina de estados determinista.
     guardrails/      Compuertas de seguridad como condiciones del programa.
     criterios/       Evaluación determinista y extracción estructurada.
   llm/
     clasificador.ts  Único punto donde interviene un modelo. Solo clasifica.
     servidor.ts      Endpoint compatible OpenAI con SSE.
-  telefonia/         Cliente de voz, grupo de números, despachador y transferencias.
+  consola/           Consola del equipo: intérprete de texto, planilla, informe y página.
+  telefonia/         Cliente de voz, definición del agente, grupo de números,
+                     despachador y transferencias.
   webhooks/          Recepción firmada y cola durable.
   persistencia/      SQLite con WAL. Repositorios aislados del dominio.
   conciliacion/      Cuenta llamadas originadas contra resultados recibidos.
@@ -134,7 +150,8 @@ src/
 **Funciona hoy:** máquina de estados completa, guardrails, evaluación determinista,
 endpoint de LLM con streaming y function calling, recepción firmada de webhooks,
 cola durable, despachador con ventana horaria y control de concurrencia,
-conciliación, auditoría y simulador.
+conciliación, auditoría, simulador, definición completa del agente con teclado
+de fondo, y expresiones de pausa en español chileno. Ver [`docs/voz.md`](docs/voz.md).
 
 **Falta antes de un piloto con pacientes reales:**
 
@@ -144,17 +161,26 @@ conciliación, auditoría y simulador.
 - Conversión a plan Enterprise con retención cero y contrato de encargo firmado.
 - Evaluación de impacto en protección de datos, previa y obligatoria.
 - Validación del guion por el equipo tratante, con responsable clínico nombrado.
-- Selección y validación de voz con pacientes reales.
+- Selección y validación de voz con pacientes reales, incluidas las expresiones
+  de pausa, que son texto que el paciente oye.
 
 Ver [`docs/cumplimiento.md`](docs/cumplimiento.md) para el detalle de lo que la
 normativa exige y qué parte de eso resuelve este código.
 
-### Telefonía
+### Telefonía y voz
 
 Las llamadas salen por la integración nativa de Twilio con ElevenLabs. Los
 números de salida son un grupo administrable, y las transferencias se enrutan por
-motivo, servicio y horario. Hoy no hay ningún número real configurado. Qué falta,
-cómo escala y cómo se pone en marcha: [`docs/telefonia.md`](docs/telefonia.md).
+motivo, servicio y horario. Hoy no hay ningún número real configurado.
+
+El agente de la plataforma se llama **Catalina AI** y habla con la voz
+**Catalina**, español chileno. **Lo define este servicio**, no el panel: LLM
+propio apuntando a `/v1/chat/completions`, sin personalidad por defecto, sin
+herramientas ajenas, sin grabación y con retención cero. `npm run aprovisionar`
+localiza el agente y la voz por nombre, lo crea si no existe o lo reescribe, y
+`GET /admin/agente` lista cualquier cambio manual.
+Qué falta, cómo escala y cómo se pone en marcha:
+[`docs/telefonia.md`](docs/telefonia.md).
 
 ### Despliegue en Vercel
 

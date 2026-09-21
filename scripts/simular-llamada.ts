@@ -9,6 +9,8 @@
  *   npm run simular -- consulta
  */
 import { abrir, avanzar, estadoInicial } from '../src/dominio/checklist/maquina.js';
+import { elegirExpresionPausa } from '../src/dominio/checklist/pausas.js';
+import { detectarBanderaRoja } from '../src/dominio/guardrails/index.js';
 import { evaluar } from '../src/dominio/criterios/index.js';
 import { ClasificadorSimulado } from '../src/llm/clasificador.js';
 import { ContextoLlamada } from '../src/dominio/tipos.js';
@@ -72,7 +74,12 @@ for (const turno of turnos) {
     estado: st.estado,
     preguntaDelAgente: ultimaSalida,
   });
-  const r = avanzar(ctx, st, turno, cls);
+  // Misma regla que el endpoint de LLM: expresión neutra elegida antes de
+  // clasificar, salvo ante una bandera roja léxica.
+  const expresionPausa = detectarBanderaRoja(turno).detectada
+    ? ''
+    : elegirExpresionPausa({ idLlamada: ctx.idLlamada, turno: st.auditoria.length });
+  const r = avanzar(ctx, st, turno, cls, { expresionPausa });
   st = r.estado;
   ultimaSalida = r.salida;
 

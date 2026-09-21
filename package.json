@@ -13,17 +13,19 @@
     "esbuild"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.json && cp src/persistencia/esquema.sql dist/src/persistencia/",
+    "build": "tsc -p tsconfig.json && cp src/persistencia/esquema.sql dist/src/persistencia/ && cp src/consola/pagina.html dist/src/consola/",
     "dev": "tsx watch src/index.ts",
     "start": "node dist/index.js",
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
     "simular": "tsx scripts/simular-llamada.ts",
+    "aprovisionar": "tsx scripts/aprovisionar-agente.ts",
     "migrar": "tsx scripts/migrar.ts"
   },
   "dependencies": {
     "better-sqlite3": "^11.5.0",
+    "exceljs": "^4.4.0",
     "fastify": "^5.1.0",
     "pino": "^9.5.0",
     "pino-pretty": "^13.0.0",

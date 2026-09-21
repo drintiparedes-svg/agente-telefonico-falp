@@ -14,9 +14,12 @@
  */
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
-import { estadoInicial, abrir, avanzar, validarSalida } from '../dominio/checklist/maquina.js';
+import { abrir, avanzar, validarSalida } from '../dominio/checklist/maquina.js';
 import { evaluar } from '../dominio/criterios/index.js';
-import { ContextoLlamada, type MotivoEnrutamiento } from '../dominio/tipos.js';
+import { detectarBanderaRoja } from '../dominio/guardrails/index.js';
+import { ContextoLlamada, ESTADOS_TERMINALES, type MotivoEnrutamiento } from '../dominio/tipos.js';
+import { extraerIdConversacionDelPrompt } from '../telefonia/agente.js';
+import { elegirExpresionPausa } from '../dominio/checklist/pausas.js';
 import { argumentosTransferencia, motivoDesdeEstado } from '../telefonia/transferencias.js';
 import type { Clasificador } from './clasificador.js';
 import type { crearRepoAuditoria, crearRepoResultados, crearRepoSesiones } from '../persistencia/repositorios.js';
@@ -43,6 +46,12 @@ export interface DepsLLM {
   /** Número al que transferir según motivo y servicio. En producción nunca es vacío. */
   resolverTransferencia: (p: { motivo: MotivoEnrutamiento; servicio?: string | undefined }) => string;
   token: string;
+  /**
+   * Si el agente pronuncia una expresión de pausa («Ya, un segundito...») antes
+   * de clasificar. Se emite de inmediato, mientras el clasificador trabaja, y
+   * cubre el silencio de ese tramo. Por defecto, sí.
+   */
+  expresionesPausa?: boolean;
   log: { info: (o: unknown, m?: string) => void; warn: (o: unknown, m?: string) => void; error: (o: unknown, m?: string) => void };
 }
 
@@ -59,18 +68,22 @@ export function registrarEndpointLLM(app: FastifyInstance, deps: DepsLLM): void 
     }
     const p = parsed.data;
 
-    const idConversacion = resolverIdConversacion(req, p);
-    if (!idConversacion) {
+    const candidatos = candidatosIdConversacion(req, p);
+    if (candidatos.length === 0) {
       return reply.code(400).send({
         error: { message: 'Falta el identificador de conversación', type: 'invalid_request_error' },
       });
     }
 
-    const sesion = deps.sesiones.cargar(idConversacion);
-    if (!sesion) {
+    // El identificador puede llegar por varias vías y la plataforma puede haber
+    // reemplazado el propuesto por el suyo: vale el primero que tenga sesión.
+    const encontrado = candidatos
+      .map((id) => ({ id, sesion: deps.sesiones.cargar(id) }))
+      .find((c) => c.sesion !== null);
+    if (!encontrado?.sesion) {
       // Sin sesión precargada no hay indicación clínica verificada y por lo tanto
       // no hay nada lícito que decir. Se corta en vez de improvisar.
-      deps.log.error({ idConversacion }, 'Turno recibido sin sesión precargada');
+      deps.log.error({ candidatos }, 'Turno recibido sin sesión precargada');
       return responder(reply, {
         texto: 'Disculpe, no puedo continuar en este momento. Le llamaremos nuevamente.',
         herramienta: 'end_call',
@@ -78,20 +91,44 @@ export function registrarEndpointLLM(app: FastifyInstance, deps: DepsLLM): void 
       });
     }
 
-    const { ctx, st } = sesion;
+    const idConversacion = encontrado.id;
+    const { ctx } = encontrado.sesion;
+    let st = encontrado.sesion.st;
     const ultimoUsuario = [...p.messages].reverse().find((m) => m.role === 'user');
     const textoPaciente = typeof ultimoUsuario?.content === 'string' ? ultimoUsuario.content : '';
 
-    // Primer turno: el agente abre. No hay nada del paciente que clasificar.
-    if (st.auditoria.length === 0 && textoPaciente.trim() === '') {
+    // Primer turno: el agente abre. En una llamada saliente la plataforma espera
+    // a que el interlocutor hable, así que lo primero que llega suele ser un
+    // «aló». Eso no es una respuesta al guion y no se clasifica. La única
+    // excepción es una bandera roja dicha antes de que el agente hable: un
+    // paciente que sangra sigue siendo un paciente que sangra.
+    if (st.auditoria.length === 0) {
       const r = abrir(ctx, st);
       deps.sesiones.guardar(idConversacion, ctx, r.estado);
       deps.auditoria.registrar(r.estado.auditoria.slice(st.auditoria.length));
-      return responder(reply, { texto: r.salida });
+      if (!detectarBanderaRoja(textoPaciente).detectada) {
+        return responder(reply, { texto: r.salida });
+      }
+      st = r.estado;
     }
 
     const ultimoAgente = [...p.messages].reverse().find((m) => m.role === 'assistant');
     const preguntaDelAgente = typeof ultimoAgente?.content === 'string' ? ultimoAgente.content : '';
+
+    // Expresión de pausa. Se decide ANTES de clasificar, por eso tiene que ser
+    // neutra, y se emite de inmediato para que la voz la pronuncie mientras el
+    // clasificador trabaja. Ante una bandera roja léxica no hay pausa que
+    // valga: la detección es síncrona y la respuesta sale al instante.
+    const expresionPausa =
+      deps.expresionesPausa !== false &&
+      textoPaciente.trim() !== '' &&
+      !ESTADOS_TERMINALES.includes(st.estado) &&
+      !detectarBanderaRoja(textoPaciente).detectada
+        ? elegirExpresionPausa({ idLlamada: ctx.idLlamada, turno: st.auditoria.length })
+        : '';
+
+    const flujo = abrirFlujo(reply);
+    if (expresionPausa !== '') flujo.texto(expresionPausa);
 
     const cls = await deps.clasificador.clasificar({
       textoPaciente,
@@ -99,13 +136,13 @@ export function registrarEndpointLLM(app: FastifyInstance, deps: DepsLLM): void 
       preguntaDelAgente,
     });
 
-    const r = avanzar(ctx, st, textoPaciente, cls);
+    const r = avanzar(ctx, st, textoPaciente, cls, { expresionPausa });
 
     // Última compuerta antes de la voz: la línea debe pertenecer al guion.
     const v = validarSalida(ctx, r.salida);
     if (!v.valida) {
       deps.log.error({ idConversacion, salida: r.salida, motivo: v.motivo }, 'Salida fuera del guion');
-      return responder(reply, {
+      return flujo.cerrar({
         texto: 'Le voy a comunicar con una persona del equipo. No corte, por favor.',
         herramienta: 'transfer_to_number',
         argumentos: transferir(deps, ctx, 'fuera_de_guion'),
@@ -115,11 +152,14 @@ export function registrarEndpointLLM(app: FastifyInstance, deps: DepsLLM): void 
     deps.sesiones.guardar(idConversacion, ctx, r.estado);
     deps.auditoria.registrar(r.estado.auditoria.slice(st.auditoria.length));
 
+    // Lo que falta por pronunciar: la línea sin la expresión ya emitida.
+    const resto = expresionPausa === '' ? r.salida : r.salida.slice(expresionPausa.length).trimStart();
+
     if (r.transferir) {
       const res = evaluar(ctx, r.estado);
       deps.resultados.guardar(ctx.idPaciente, res);
-      return responder(reply, {
-        texto: r.salida,
+      return flujo.cerrar({
+        texto: resto,
         herramienta: 'transfer_to_number',
         argumentos: transferir(deps, ctx, motivoDesdeEstado(r.estado.estado)),
       });
@@ -129,14 +169,14 @@ export function registrarEndpointLLM(app: FastifyInstance, deps: DepsLLM): void 
       const res = evaluar(ctx, r.estado);
       deps.resultados.guardar(ctx.idPaciente, res);
       deps.sesiones.borrar(idConversacion);
-      return responder(reply, {
-        texto: r.salida,
+      return flujo.cerrar({
+        texto: resto,
         herramienta: 'end_call',
         argumentos: { reason: r.estado.estado },
       });
     }
 
-    return responder(reply, { texto: r.salida });
+    return flujo.cerrar({ texto: resto });
   });
 }
 
@@ -147,22 +187,26 @@ function transferir(deps: DepsLLM, ctx: ContextoLlamada, motivo: MotivoEnrutamie
 }
 
 /**
- * El identificador de conversación puede llegar por cabecera propia, por las
- * variables dinámicas de la plataforma o por el campo `user`. Se aceptan las tres
- * para no depender de un único punto de configuración.
+ * Identificadores de conversación que trae la petición, en orden de confianza:
+ * cabecera propia, el marcador que este servicio dejó en el prompt de sistema
+ * del agente (la plataforma sustituye ahí su propio id de conversación), el
+ * cuerpo extra que la plataforma reenvía desde la originación, y el campo
+ * `user`. Se devuelven todos porque la plataforma puede haber reemplazado el
+ * id propuesto por el suyo y la sesión estar indexada por cualquiera de los dos.
  */
-function resolverIdConversacion(req: FastifyRequest, p: z.infer<typeof Peticion>): string | null {
-  const cabecera = req.headers['x-conversation-id'];
-  if (typeof cabecera === 'string' && cabecera.length > 0) return cabecera;
-  const extra = p.elevenlabs_extra_body;
-  if (extra) {
-    for (const clave of ['conversation_id', 'system__conversation_id', 'idConversacion']) {
-      const v = extra[clave];
-      if (typeof v === 'string' && v.length > 0) return v;
-    }
+export function candidatosIdConversacion(req: FastifyRequest, p: z.infer<typeof Peticion>): string[] {
+  const ids: string[] = [];
+  const agregar = (v: unknown) => {
+    if (typeof v === 'string' && v.length > 0 && !ids.includes(v)) ids.push(v);
+  };
+  agregar(req.headers['x-conversation-id']);
+  for (const m of p.messages) {
+    if (m.role === 'system' && typeof m.content === 'string') agregar(extraerIdConversacionDelPrompt(m.content));
   }
-  if (p.user && p.user.length > 0) return p.user;
-  return null;
+  const extra = p.elevenlabs_extra_body;
+  if (extra) for (const clave of ['conversation_id', 'system__conversation_id', 'idConversacion']) agregar(extra[clave]);
+  agregar(p.user);
+  return ids;
 }
 
 interface Salida {
@@ -171,8 +215,20 @@ interface Salida {
   argumentos?: Record<string, unknown>;
 }
 
-/** Emite la respuesta en el formato de streaming que la plataforma espera. */
-function responder(reply: FastifyReply, s: Salida): FastifyReply {
+interface Flujo {
+  /** Emite texto ya, sin esperar al resto del turno. */
+  texto: (t: string) => void;
+  /** Emite lo que falta, la herramienta si la hay, y cierra. */
+  cerrar: (s: Salida) => FastifyReply;
+}
+
+/**
+ * Abre la respuesta en el formato de streaming que la plataforma espera y
+ * permite emitir texto en dos tiempos: la expresión de pausa de inmediato y la
+ * línea del guion cuando esté decidida. Cada frase viaja en su propio fragmento
+ * para que la voz empiece a hablar antes de recibir el turno completo.
+ */
+function abrirFlujo(reply: FastifyReply): Flujo {
   reply.raw.writeHead(200, {
     'content-type': 'text/event-stream; charset=utf-8',
     'cache-control': 'no-cache, no-transform',
@@ -192,32 +248,44 @@ function responder(reply: FastifyReply, s: Salida): FastifyReply {
 
   escribir({ role: 'assistant' }, null);
 
-  // El texto se envía en fragmentos por frase: la capa de voz empieza a hablar
-  // antes de recibir el turno completo y eso recorta la latencia percibida.
-  for (const trozo of trocear(s.texto)) escribir({ content: trozo }, null);
+  return {
+    texto(t) {
+      // Un espacio al final separa este fragmento del siguiente cuando la
+      // plataforma concatena el turno.
+      for (const trozo of trocear(t)) escribir({ content: trozo.endsWith(' ') ? trozo : `${trozo} ` }, null);
+    },
+    cerrar(s) {
+      for (const trozo of trocear(s.texto)) escribir({ content: trozo }, null);
 
-  if (s.herramienta) {
-    escribir(
-      {
-        tool_calls: [
+      if (s.herramienta) {
+        escribir(
           {
-            index: 0,
-            id: `call_${Date.now().toString(36)}`,
-            type: 'function',
-            function: { name: s.herramienta, arguments: JSON.stringify(s.argumentos ?? {}) },
+            tool_calls: [
+              {
+                index: 0,
+                id: `call_${Date.now().toString(36)}`,
+                type: 'function',
+                function: { name: s.herramienta, arguments: JSON.stringify(s.argumentos ?? {}) },
+              },
+            ],
           },
-        ],
-      },
-      null,
-    );
-    escribir({}, 'tool_calls');
-  } else {
-    escribir({}, 'stop');
-  }
+          null,
+        );
+        escribir({}, 'tool_calls');
+      } else {
+        escribir({}, 'stop');
+      }
 
-  reply.raw.write('data: [DONE]\n\n');
-  reply.raw.end();
-  return reply;
+      reply.raw.write('data: [DONE]\n\n');
+      reply.raw.end();
+      return reply;
+    },
+  };
+}
+
+/** Respuesta de un solo tiempo. */
+function responder(reply: FastifyReply, s: Salida): FastifyReply {
+  return abrirFlujo(reply).cerrar(s);
 }
 
 /**
