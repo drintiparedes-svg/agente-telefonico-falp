@@ -43,8 +43,15 @@ const Esquema = z.object({
     (v) => (v === '' ? undefined : v),
     z.string().url().refine((u) => u.startsWith('https://'), 'Debe ser https').optional(),
   ),
-  /** Voz seleccionada y validada con el equipo. Sin ella no se sincroniza el agente. */
+  /** Nombre del agente en el workspace. Se busca por este nombre cuando no hay ELEVENLABS_AGENT_ID. */
+  ELEVENLABS_AGENTE_NOMBRE: z.string().min(1).default('Catalina AI'),
+  /**
+   * Voz seleccionada y validada con el equipo. Se puede dar por identificador o
+   * por nombre; el identificador manda. Con el nombre, el servicio la busca en
+   * el workspace y exige una coincidencia exacta y única.
+   */
   ELEVENLABS_VOICE_ID: z.preprocess((v) => (v === '' ? undefined : v), z.string().min(1).optional()),
+  ELEVENLABS_VOICE_NOMBRE: z.string().min(1).default('Catalina'),
   ELEVENLABS_TTS_MODELO: z.enum(MODELOS_TTS).default('eleven_flash_v2_5'),
   ELEVENLABS_IDIOMA: z.string().regex(/^[a-z]{2}$/).default('es'),
   /** Nombre del secreto del workspace que guarda LLM_TOKEN. */

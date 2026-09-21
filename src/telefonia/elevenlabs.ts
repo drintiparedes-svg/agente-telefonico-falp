@@ -62,6 +62,38 @@ export interface ClienteVoz {
    * secreto de firma UNA sola vez; quien llama debe guardarlo como WEBHOOK_SECRETO.
    */
   crearWebhookPostLlamada(nombre: string, url: string): Promise<Resultado<{ webhookId: string; secreto: string | null }>>;
+
+  /**
+   * Busca una voz del workspace por nombre exacto (sin distinguir mayúsculas ni
+   * acentos). Si hay varias con el mismo nombre no elige: devuelve las candidatas
+   * para que una persona decida.
+   */
+  buscarVoz(nombre: string): Promise<Resultado<{ voz: VozPlataforma | null; candidatas: VozPlataforma[] }>>;
+  /** Busca un agente del workspace por nombre exacto. Misma regla de unicidad. */
+  buscarAgente(nombre: string): Promise<Resultado<{ agente: AgentePlataforma | null; candidatos: AgentePlataforma[] }>>;
+  /** Fija el agente sobre el que operan `leerAgente` y `escribirAgente`. */
+  usarAgente(agentId: string): void;
+}
+
+export interface VozPlataforma {
+  voiceId: string;
+  nombre: string;
+  /** Etiquetas de la plataforma: idioma, acento, género, etc. */
+  etiquetas: Record<string, string>;
+  idiomas: string[];
+}
+
+export interface AgentePlataforma {
+  agentId: string;
+  nombre: string;
+  voiceId: string;
+}
+
+/** Comparación de nombres tolerante a mayúsculas, acentos y espacios repetidos. */
+export function mismoNombre(a: string, b: string): boolean {
+  const n = (s: string) =>
+    s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/\s+/g, ' ').trim();
+  return n(a) === n(b);
 }
 
 export interface OpcionesCliente {
@@ -102,9 +134,15 @@ export function cuerpoReglasAgente(reglas: readonly ReglaTransferencia[]): Recor
 
 export class ClienteElevenLabs implements ClienteVoz {
   private readonly fetchImpl: typeof fetch;
+  private readonly o: OpcionesCliente;
 
-  constructor(private readonly o: OpcionesCliente) {
+  constructor(o: OpcionesCliente) {
+    this.o = { ...o };
     this.fetchImpl = o.fetchImpl ?? fetch;
+  }
+
+  usarAgente(agentId: string): void {
+    this.o.agentId = agentId;
   }
 
   private async pedir(
@@ -253,6 +291,42 @@ export class ClienteElevenLabs implements ClienteVoz {
       return { ok: true, error: null, webhookId: id, secreto: typeof c['webhook_secret'] === 'string' ? c['webhook_secret'] : null };
     });
   }
+
+  buscarVoz(nombre: string): Promise<Resultado<{ voz: VozPlataforma | null; candidatas: VozPlataforma[] }>> {
+    return this.intentar<{ voz: VozPlataforma | null; candidatas: VozPlataforma[] }>(async () => {
+      const r = await this.pedir(`/v2/voices?search=${encodeURIComponent(nombre)}&page_size=100`, 'GET');
+      if (!r.ok) return { ok: false, error: this.fallo(r) };
+      const lista = ((r.datos ?? {}) as { voices?: Array<Record<string, unknown>> }).voices ?? [];
+      const candidatas = lista
+        .map((v): VozPlataforma => ({
+          voiceId: String(v['voice_id'] ?? ''),
+          nombre: String(v['name'] ?? ''),
+          etiquetas: (v['labels'] ?? {}) as Record<string, string>,
+          idiomas: Array.isArray(v['verified_languages'])
+            ? (v['verified_languages'] as Array<Record<string, unknown>>).map((l) => String(l['language'] ?? '')).filter(Boolean)
+            : [],
+        }))
+        .filter((v) => v.voiceId !== '' && mismoNombre(v.nombre, nombre));
+      return { ok: true, error: null, voz: candidatas.length === 1 ? candidatas[0]! : null, candidatas };
+    });
+  }
+
+  buscarAgente(nombre: string): Promise<Resultado<{ agente: AgentePlataforma | null; candidatos: AgentePlataforma[] }>> {
+    return this.intentar<{ agente: AgentePlataforma | null; candidatos: AgentePlataforma[] }>(async () => {
+      const r = await this.pedir(`/v1/convai/agents?search=${encodeURIComponent(nombre)}&page_size=100`, 'GET');
+      if (!r.ok) return { ok: false, error: this.fallo(r) };
+      const lista = ((r.datos ?? {}) as { agents?: Array<Record<string, unknown>> }).agents ?? [];
+      const candidatos = lista
+        .filter((a) => a['archived'] !== true)
+        .map((a): AgentePlataforma => ({
+          agentId: String(a['agent_id'] ?? ''),
+          nombre: String(a['name'] ?? ''),
+          voiceId: String(a['voice_id'] ?? ''),
+        }))
+        .filter((a) => a.agentId !== '' && mismoNombre(a.nombre, nombre));
+      return { ok: true, error: null, agente: candidatos.length === 1 ? candidatos[0]! : null, candidatos };
+    });
+  }
 }
 
 /** Cliente que no hace red. Para pruebas, CI y ensayos en seco del despachador. */
@@ -266,6 +340,24 @@ export class ClienteVozSimulado implements ClienteVoz {
   public agente: Record<string, unknown> | null = null;
   public readonly secretos = new Map<string, { secretId: string; valor: string }>();
   public webhooks: Array<{ webhookId: string; nombre: string; url: string }> = [];
+  /** Voces y agentes que devolverán las búsquedas. */
+  public voces: VozPlataforma[] = [];
+  public agentes: AgentePlataforma[] = [];
+  public agenteEnUso = '';
+
+  usarAgente(agentId: string): void {
+    this.agenteEnUso = agentId;
+  }
+
+  async buscarVoz(nombre: string): Promise<Resultado<{ voz: VozPlataforma | null; candidatas: VozPlataforma[] }>> {
+    const candidatas = this.voces.filter((v) => mismoNombre(v.nombre, nombre));
+    return { ok: true, error: null, voz: candidatas.length === 1 ? candidatas[0]! : null, candidatas };
+  }
+
+  async buscarAgente(nombre: string): Promise<Resultado<{ agente: AgentePlataforma | null; candidatos: AgentePlataforma[] }>> {
+    const candidatos = this.agentes.filter((a) => mismoNombre(a.nombre, nombre));
+    return { ok: true, error: null, agente: candidatos.length === 1 ? candidatos[0]! : null, candidatos };
+  }
 
   async llamarSaliente(p: Parameters<ClienteVoz['llamarSaliente']>[0]): Promise<ResultadoOriginacion> {
     this.llamadas.push({ telefono: p.telefono, idConversacion: p.idConversacionPropuesto, idNumero: p.numero.idPlataforma });

@@ -9,7 +9,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { cargarConfig, _limpiarCacheConfig } from '../src/config/index.js';
 import { construirServicio, type Servicio } from '../src/api/servidor.js';
-import { ClienteElevenLabs, ClienteVozSimulado } from '../src/telefonia/elevenlabs.js';
+import { ClienteElevenLabs, ClienteVozSimulado, mismoNombre } from '../src/telefonia/elevenlabs.js';
 import {
   compararAgente,
   cuerpoAgente,
@@ -209,6 +209,50 @@ describe('Sincronización del agente por la API de administración', () => {
     expect((cliente.agente as Cuerpo).platform_settings.privacy.record_voice).toBe(false);
   });
 
+  it('el agente se llama como diga la configuración, «Catalina AI» por defecto', async () => {
+    const { svc, cliente } = levantar(env);
+    await svc.app.inject({ method: 'POST', url: '/admin/agente/sincronizar', headers });
+    expect((cliente.agente as Cuerpo).name).toBe('Catalina AI');
+    const r = await svc.app.inject({ method: 'GET', url: '/admin/agente', headers });
+    expect(r.json()).toMatchObject({ nombre: 'Catalina AI', voiceId: 'voz_1' });
+  });
+
+  it('sin ELEVENLABS_VOICE_ID busca la voz por nombre y exige una coincidencia única', async () => {
+    const soloUrl = { ADMIN_TOKEN: ADMIN, SERVICIO_URL_PUBLICA: URL_PUBLICA };
+    const { svc, cliente } = levantar(soloUrl);
+
+    // Sin ninguna voz con ese nombre: no se sincroniza ni se adivina.
+    const sinVoz = await svc.app.inject({ method: 'POST', url: '/admin/agente/sincronizar', headers });
+    expect(sinVoz.statusCode).toBe(502);
+    expect(sinVoz.json().error).toMatch(/ninguna voz llamada «Catalina»/);
+    expect(cliente.agente).toBeNull();
+
+    // Dos voces con el mismo nombre: tampoco.
+    cliente.voces = [
+      { voiceId: 'v_cl', nombre: 'Catalina', etiquetas: { language: 'es', accent: 'chilean' }, idiomas: ['es'] },
+      { voiceId: 'v_es', nombre: 'catalina', etiquetas: { language: 'es', accent: 'castilian' }, idiomas: ['es'] },
+    ];
+    const ambigua = await svc.app.inject({ method: 'POST', url: '/admin/agente/sincronizar', headers });
+    expect(ambigua.statusCode).toBe(502);
+    expect(ambigua.json().error).toMatch(/2 voces llamadas «Catalina»/);
+    expect(ambigua.json().error).toContain('v_cl');
+    expect(ambigua.json().error).toContain('chilean');
+
+    // Una sola: se usa y se informa el identificador.
+    cliente.voces = [cliente.voces[0]!];
+    const ok = await svc.app.inject({ method: 'POST', url: '/admin/agente/sincronizar', headers });
+    expect(ok.statusCode).toBe(200);
+    expect(ok.json().voiceId).toBe('v_cl');
+    expect((cliente.agente as Cuerpo).conversation_config.tts.voice_id).toBe('v_cl');
+  });
+
+  it('el identificador de voz manda sobre el nombre', async () => {
+    const { svc, cliente } = levantar({ ...env, ELEVENLABS_VOICE_NOMBRE: 'Otra' });
+    cliente.voces = [{ voiceId: 'v_otra', nombre: 'Otra', etiquetas: {}, idiomas: [] }];
+    const ok = await svc.app.inject({ method: 'POST', url: '/admin/agente/sincronizar', headers });
+    expect(ok.json().voiceId).toBe('voz_1');
+  });
+
   it('en desarrollo puede sincronizarse sin retención cero, y el cuerpo lo refleja', async () => {
     const { svc, cliente } = levantar({ ...env, ELEVENLABS_RETENCION_CERO: 'false' });
     await svc.app.inject({ method: 'POST', url: '/admin/agente/sincronizar', headers });
@@ -291,6 +335,55 @@ describe('Cliente ElevenLabs: agente, secretos y webhook', () => {
       url: 'https://api.prueba/v1/workspace/webhooks',
       cuerpo: { settings: { auth_type: 'hmac', name: 'n', webhook_url: 'https://x/webhooks/postcall' } },
     });
+  });
+
+  it('busca voces y agentes por nombre exacto, sin distinguir mayúsculas ni acentos', async () => {
+    expect(mismoNombre('Catalina AI', 'catalina ai')).toBe(true);
+    expect(mismoNombre('Catalína', 'catalina')).toBe(true);
+    expect(mismoNombre('Catalina', 'Catalina 2')).toBe(false);
+
+    const { cliente, pedidos } = falso([
+      {
+        cuerpo: {
+          voices: [
+            { voice_id: 'v1', name: 'Catalina', labels: { accent: 'chilean', language: 'es' }, verified_languages: [{ language: 'es', accent: 'chilean' }] },
+            { voice_id: 'v2', name: 'Catalina Joven', labels: {} },
+          ],
+          has_more: false,
+          total_count: 2,
+        },
+      },
+      {
+        cuerpo: {
+          agents: [
+            { agent_id: 'a1', name: 'Catalina AI', voice_id: 'v1', tags: [], created_at_unix_secs: 1, access_info: {} },
+            { agent_id: 'a0', name: 'Catalina AI', voice_id: 'v1', tags: [], created_at_unix_secs: 1, access_info: {}, archived: true },
+            { agent_id: 'a2', name: 'Catalina AI pruebas', voice_id: 'v1', tags: [], created_at_unix_secs: 1, access_info: {} },
+          ],
+          has_more: false,
+        },
+      },
+    ]);
+    const v = await cliente.buscarVoz('catalina');
+    expect(v).toEqual({
+      ok: true,
+      error: null,
+      voz: { voiceId: 'v1', nombre: 'Catalina', etiquetas: { accent: 'chilean', language: 'es' }, idiomas: ['es'] },
+      candidatas: [{ voiceId: 'v1', nombre: 'Catalina', etiquetas: { accent: 'chilean', language: 'es' }, idiomas: ['es'] }],
+    });
+    expect(pedidos[0]?.url).toBe('https://api.prueba/v2/voices?search=catalina&page_size=100');
+
+    // El agente archivado con el mismo nombre no cuenta.
+    const a = await cliente.buscarAgente('Catalina AI');
+    expect(a).toMatchObject({ ok: true, agente: { agentId: 'a1', nombre: 'Catalina AI', voiceId: 'v1' } });
+    expect(pedidos[1]?.url).toBe('https://api.prueba/v1/convai/agents?search=Catalina%20AI&page_size=100');
+  });
+
+  it('usarAgente cambia el agente sobre el que se lee y escribe', async () => {
+    const { cliente, pedidos } = falso([{ cuerpo: { agent_id: 'a9' } }]);
+    cliente.usarAgente('a9');
+    await cliente.leerAgente();
+    expect(pedidos[0]?.url).toBe('https://api.prueba/v1/convai/agents/a9');
   });
 
   it('la originación reenvía el id propuesto en el cuerpo extra del LLM propio', async () => {

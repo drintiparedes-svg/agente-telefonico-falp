@@ -65,7 +65,7 @@ Están implementados como código y cubiertos por pruebas con umbral del 100 %.
 
 ```bash
 npm install
-npm test                  # 93 pruebas, sin red
+npm test                  # 98 pruebas, sin red
 npm run simular -- alarma # recorre un escenario completo en consola
 npm run dev               # servicio en :8080
 npm run aprovisionar      # crea o reescribe el agente en la plataforma de voz
@@ -159,10 +159,12 @@ Las llamadas salen por la integración nativa de Twilio con ElevenLabs. Los
 números de salida son un grupo administrable, y las transferencias se enrutan por
 motivo, servicio y horario. Hoy no hay ningún número real configurado.
 
-El agente de la plataforma **lo define este servicio**, no el panel: LLM propio
-apuntando a `/v1/chat/completions`, sin personalidad por defecto, sin
+El agente de la plataforma se llama **Catalina AI** y habla con la voz
+**Catalina**, español chileno. **Lo define este servicio**, no el panel: LLM
+propio apuntando a `/v1/chat/completions`, sin personalidad por defecto, sin
 herramientas ajenas, sin grabación y con retención cero. `npm run aprovisionar`
-lo crea o lo reescribe, y `GET /admin/agente` lista cualquier cambio manual.
+localiza el agente y la voz por nombre, lo crea si no existe o lo reescribe, y
+`GET /admin/agente` lista cualquier cambio manual.
 Qué falta, cómo escala y cómo se pone en marcha:
 [`docs/telefonia.md`](docs/telefonia.md).
 

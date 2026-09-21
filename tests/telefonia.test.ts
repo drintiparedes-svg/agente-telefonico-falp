@@ -257,7 +257,7 @@ describe('Administración de telefonía', () => {
     const headers = { authorization: `Bearer ${ADMIN}` };
     const r = await svc.app.inject({ method: 'POST', url: '/admin/agente/sincronizar', headers });
     expect(r.statusCode).toBe(422);
-    expect(r.json().faltan).toEqual(['SERVICIO_URL_PUBLICA', 'ELEVENLABS_VOICE_ID']);
+    expect(r.json().faltan).toEqual(['SERVICIO_URL_PUBLICA']);
     expect((await svc.app.inject({ method: 'GET', url: '/admin/agente', headers })).statusCode).toBe(422);
   });
 });

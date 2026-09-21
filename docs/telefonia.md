@@ -103,15 +103,19 @@ Dos opciones de la plataforma que **no** sirven aquí:
 
 ### En ElevenLabs
 
-1. Crear una clave API del workspace con permisos sobre agentes, secretos,
-   webhooks y números.
-2. Elegir la voz en *Voices* y anotar su `voice_id`. La selección definitiva se
-   valida con pacientes; hasta entonces cualquier voz en español sirve para
-   probar.
+1. Crear una clave API del workspace con permisos sobre agentes, voces,
+   secretos, webhooks y números.
+2. Tener la voz en la biblioteca del workspace. La voz elegida es **Catalina**,
+   español chileno; el servicio la busca por ese nombre
+   (`ELEVENLABS_VOICE_NOMBRE`) y exige una coincidencia exacta y única. Si hay
+   varias voces con ese nombre, fijar la correcta con `ELEVENLABS_VOICE_ID`. La
+   selección definitiva se valida con pacientes.
 3. En *Phone Numbers*, importar cada número con la clave API de Twilio.
 
-El agente **no se configura en el panel**: lo escribe este servicio. Ver la
-sección siguiente.
+El agente se llama **Catalina AI** (`ELEVENLABS_AGENTE_NOMBRE`). Si ya existe en
+el workspace, el servicio lo localiza por nombre y lo reescribe; si no existe,
+lo crea. El agente **no se configura en el panel**: lo escribe este servicio.
+Ver la sección siguiente.
 
 ### El agente lo define este servicio
 
@@ -127,7 +131,8 @@ intención, la definición completa del agente vive en
 | Prompt | Texto explicativo más `conversation_id={{system__conversation_id}}` | No instruye a ningún modelo; transporta el id de conversación |
 | Primer mensaje | Vacío | Un mensaje fijo saldría sin pasar por la lista blanca ni la auditoría |
 | Herramientas | Solo `end_call` y `transfer_to_number` | Sin bases de conocimiento, MCP ni herramientas externas |
-| Voz | `ELEVENLABS_VOICE_ID`, `ELEVENLABS_TTS_MODELO`, idioma `es`, velocidad 0,95 | Paciente oncológico, a menudo mayor |
+| Nombre | `ELEVENLABS_AGENTE_NOMBRE`, «Catalina AI» | Se localiza por nombre si no hay id |
+| Voz | «Catalina» por nombre o `ELEVENLABS_VOICE_ID`, `ELEVENLABS_TTS_MODELO`, idioma `es`, velocidad 0,95 | Paciente oncológico, a menudo mayor |
 | Normalización de texto | De la plataforma | El guion entrega «22:00» y confía en que se lea como hora |
 | Turnos | 10 s de espera, modo paciente, corte a los 30 s de silencio | No interrumpir a quien habla despacio |
 | Duración máxima | 15 minutos | Un checklist no dura más |
@@ -153,15 +158,18 @@ desde la originación. Sin sesión, la llamada se corta sin contenido clínico.
 
 ### Aprovisionar el agente
 
-Definir `ELEVENLABS_API_KEY`, `SERVICIO_URL_PUBLICA`, `ELEVENLABS_VOICE_ID`,
-`LLM_TOKEN` y `NUMERO_TRANSFERENCIA`. Luego, la primera vez:
+Definir `ELEVENLABS_API_KEY`, `SERVICIO_URL_PUBLICA`, `LLM_TOKEN` y
+`NUMERO_TRANSFERENCIA`. Los nombres del agente y de la voz ya vienen por
+defecto («Catalina AI» y «Catalina»). Luego, la primera vez:
 
 ```bash
 npm run aprovisionar -- --webhook
 ```
 
-Crea el secreto del token, el webhook post-llamada y el agente, e imprime
-`ELEVENLABS_AGENT_ID`, `ELEVENLABS_POSTCALL_WEBHOOK_ID` y `WEBHOOK_SECRETO`.
+Busca la voz por nombre, crea el secreto del token y el webhook post-llamada,
+localiza el agente por nombre o lo crea, y lo reescribe. Imprime
+`ELEVENLABS_VOICE_ID`, `ELEVENLABS_AGENT_ID`, `ELEVENLABS_POSTCALL_WEBHOOK_ID`
+y `WEBHOOK_SECRETO` para fijarlos en el entorno.
 El secreto de firma **no vuelve a mostrarse**: guardarlo en ese momento. Con
 esas variables definidas, cada ejecución posterior reescribe el agente y
 muestra qué corrigió:

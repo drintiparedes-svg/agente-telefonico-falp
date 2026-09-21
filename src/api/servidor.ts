@@ -21,26 +21,44 @@ import { reglasParaAgente, resolverDestino } from '../telefonia/transferencias.j
 import { compararAgente, cuerpoAgente, type DefinicionAgente } from '../telefonia/agente.js';
 import { conciliar } from '../conciliacion/conciliar.js';
 
-export const NOMBRE_AGENTE = 'FALP · Preparación pre-procedimiento';
-
 /** Variables sin las cuales no se puede escribir la definición del agente. */
 export function faltantesParaAgente(cfg: Config): string[] {
   const faltan: string[] = [];
   if (!cfg.SERVICIO_URL_PUBLICA) faltan.push('SERVICIO_URL_PUBLICA');
-  if (!cfg.ELEVENLABS_VOICE_ID) faltan.push('ELEVENLABS_VOICE_ID');
+  if (!cfg.ELEVENLABS_VOICE_ID && !cfg.ELEVENLABS_VOICE_NOMBRE) faltan.push('ELEVENLABS_VOICE_ID');
   return faltan;
+}
+
+/**
+ * Identificador de la voz. Manda ELEVENLABS_VOICE_ID; si no está, se busca en
+ * el workspace por ELEVENLABS_VOICE_NOMBRE. Una coincidencia ambigua o ausente
+ * es un error: la voz con que se habla a un paciente no se adivina.
+ */
+export async function resolverVoz(
+  cfg: Config,
+  cliente: ClienteVoz,
+): Promise<{ ok: true; voiceId: string; origen: 'id' | 'nombre' } | { ok: false; error: string }> {
+  if (cfg.ELEVENLABS_VOICE_ID) return { ok: true, voiceId: cfg.ELEVENLABS_VOICE_ID, origen: 'id' };
+  const r = await cliente.buscarVoz(cfg.ELEVENLABS_VOICE_NOMBRE);
+  if (!r.ok) return { ok: false, error: `No se pudo buscar la voz «${cfg.ELEVENLABS_VOICE_NOMBRE}»: ${r.error}` };
+  if (r.voz) return { ok: true, voiceId: r.voz.voiceId, origen: 'nombre' };
+  if (r.candidatas.length === 0) {
+    return { ok: false, error: `No hay ninguna voz llamada «${cfg.ELEVENLABS_VOICE_NOMBRE}» en el workspace. Agréguela a la biblioteca o defina ELEVENLABS_VOICE_ID.` };
+  }
+  const lista = r.candidatas.map((v) => `${v.voiceId} (${JSON.stringify(v.etiquetas)})`).join('; ');
+  return { ok: false, error: `Hay ${r.candidatas.length} voces llamadas «${cfg.ELEVENLABS_VOICE_NOMBRE}»: ${lista}. Defina ELEVENLABS_VOICE_ID con la correcta.` };
 }
 
 /** Definición del agente a partir de la configuración y de los destinos vigentes. */
 export function definicionAgente(
   cfg: Config,
-  p: { secretIdLlm: string; reglas: DefinicionAgente['reglas']; webhookPostLlamadaId?: string | null },
+  p: { secretIdLlm: string; voiceId: string; reglas: DefinicionAgente['reglas']; webhookPostLlamadaId?: string | null },
 ): DefinicionAgente {
   return {
-    nombre: NOMBRE_AGENTE,
+    nombre: cfg.ELEVENLABS_AGENTE_NOMBRE,
     urlPublica: cfg.SERVICIO_URL_PUBLICA ?? '',
     secretIdLlm: p.secretIdLlm,
-    voiceId: cfg.ELEVENLABS_VOICE_ID ?? '',
+    voiceId: p.voiceId,
     ttsModelo: cfg.ELEVENLABS_TTS_MODELO,
     idioma: cfg.ELEVENLABS_IDIOMA,
     retencionCero: cfg.ELEVENLABS_RETENCION_CERO,
@@ -60,22 +78,25 @@ export async function sincronizarAgente(
   cliente: ClienteVoz,
   reglas: DefinicionAgente['reglas'],
 ): Promise<
-  | { ok: true; reglas: number; secretoCreado: boolean; discrepanciasPrevias: ReturnType<typeof compararAgente> }
+  | { ok: true; reglas: number; voiceId: string; secretoCreado: boolean; discrepanciasPrevias: ReturnType<typeof compararAgente> }
   | { ok: false; error: string; faltan?: string[] }
 > {
   const faltan = faltantesParaAgente(cfg);
   if (faltan.length > 0) return { ok: false, error: `Faltan variables para definir el agente: ${faltan.join(', ')}`, faltan };
 
+  const voz = await resolverVoz(cfg, cliente);
+  if (!voz.ok) return { ok: false, error: voz.error };
+
   const secreto = await cliente.asegurarSecreto(cfg.ELEVENLABS_SECRETO_LLM_NOMBRE, cfg.LLM_TOKEN);
   if (!secreto.ok) return { ok: false, error: `No se pudo escribir el secreto del token: ${secreto.error}` };
 
-  const definicion = definicionAgente(cfg, { secretIdLlm: secreto.secretId, reglas });
+  const definicion = definicionAgente(cfg, { secretIdLlm: secreto.secretId, voiceId: voz.voiceId, reglas });
   const previo = await cliente.leerAgente();
   const discrepanciasPrevias = previo.ok ? compararAgente(definicion, previo.datos) : [];
 
   const r = await cliente.escribirAgente(cuerpoAgente(definicion));
   if (!r.ok) return { ok: false, error: r.error };
-  return { ok: true, reglas: reglas.length, secretoCreado: secreto.creado, discrepanciasPrevias };
+  return { ok: true, reglas: reglas.length, voiceId: voz.voiceId, secretoCreado: secreto.creado, discrepanciasPrevias };
 }
 
 export interface Servicio {
@@ -316,14 +337,18 @@ export function construirServicio(cfg: Config, clienteVoz?: ClienteVoz, opciones
           const faltan = faltantesParaAgente(cfg);
           if (faltan.length > 0) return reply.code(422).send({ error: 'Definición incompleta', faltan });
           const reglas = reglasParaAgente(destinos.activos(), cfg.NUMERO_TRANSFERENCIA, cfg.TRANSFERENCIA_TIPO);
+          const voz = await resolverVoz(cfg, cliente);
+          if (!voz.ok) return reply.code(502).send({ error: voz.error });
           const actual = await cliente.leerAgente();
           if (!actual.ok) return reply.code(502).send({ error: actual.error });
-          if (actual.datos === null) return { agentId: cfg.ELEVENLABS_AGENT_ID ?? null, existe: false, discrepancias: [] };
+          if (actual.datos === null) return { agentId: cfg.ELEVENLABS_AGENT_ID ?? null, existe: false, voiceId: voz.voiceId, discrepancias: [] };
           // El secreto no se compara: la plataforma no devuelve su valor.
-          const discrepancias = compararAgente(definicionAgente(cfg, { secretIdLlm: '', reglas }), actual.datos);
+          const discrepancias = compararAgente(definicionAgente(cfg, { secretIdLlm: '', voiceId: voz.voiceId, reglas }), actual.datos);
           return {
             agentId: (actual.datos as Record<string, unknown>)['agent_id'] ?? cfg.ELEVENLABS_AGENT_ID ?? null,
+            nombre: cfg.ELEVENLABS_AGENTE_NOMBRE,
             existe: true,
+            voiceId: voz.voiceId,
             sincronizado: discrepancias.length === 0,
             discrepancias,
           };

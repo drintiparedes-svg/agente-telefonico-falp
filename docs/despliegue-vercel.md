@@ -50,8 +50,9 @@ transferencia a persona no debe operar.
 Opcionales: `CLASIFICADOR=anthropic` con `ANTHROPIC_API_KEY`, y las tres
 variables `ELEVENLABS_*` para originar llamadas reales. Sin ellas el servicio usa
 el clasificador por reglas y el cliente de voz simulado. Para escribir el agente
-desde este despliegue hacen falta además `SERVICIO_URL_PUBLICA` (el dominio de
-Vercel, con `https://`) y `ELEVENLABS_VOICE_ID`; ver
+desde este despliegue hace falta además `SERVICIO_URL_PUBLICA` (el dominio de
+Vercel, con `https://`); la voz «Catalina» se busca por nombre, o se fija con
+`ELEVENLABS_VOICE_ID`; ver
 [`telefonia.md`](telefonia.md#el-agente-lo-define-este-servicio).
 
 Los números de salida y los destinos que se configuran en `/admin/*` viven en la
