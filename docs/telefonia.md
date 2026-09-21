@@ -235,6 +235,29 @@ curl -H "Authorization: Bearer $ADMIN_TOKEN" "$URL/admin/agente"
 curl -X POST -H "Authorization: Bearer $ADMIN_TOKEN" "$URL/admin/agente/sincronizar"
 ```
 
+### QA sin credenciales
+
+`scripts/simulador-elevenlabs.mjs` emula las rutas de la plataforma que usa
+este servicio y valida los puntos del contrato que importan (discriminador de
+los secretos, LLM propio, reglas de transferencia, retención cero, no grabar en
+la originación). Sirve para ensayar el aprovisionamiento, la sincronización y
+una llamada completa sin clave ni número reales:
+
+```bash
+node scripts/simulador-elevenlabs.mjs
+```
+
+```bash
+ELEVENLABS_BASE_URL=http://127.0.0.1:9099 ELEVENLABS_API_KEY=clave-de-prueba SERVICIO_URL_PUBLICA=https://agente.ejemplo npm run aprovisionar -- --webhook
+```
+
+Con el agente creado (`agent_1`), arrancar el servicio con las mismas
+variables más `ELEVENLABS_AGENT_ID=agent_1`, sincronizar el número `phnum_1` en
+`/admin/numeros`, programar una llamada con `inmediata: true` y conducir los
+turnos contra `/v1/chat/completions` con un mensaje de sistema que contenga
+`conversation_id=conv_plat_1`. Es lo que hace la verificación de este
+repositorio antes de cada entrega. No sustituye la primera llamada real.
+
 ### Prueba de aceptación
 
 1. Llamar a un teléfono del equipo y recorrer el guion completo.
