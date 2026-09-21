@@ -45,15 +45,41 @@ transferencia a persona no debe operar.
 | `WEBHOOK_SECRETO` | Clave HMAC con la que la plataforma firma los webhooks. Mínimo 16 caracteres |
 | `LLM_TOKEN` | Token que la plataforma presenta al invocar `/v1/chat/completions`. Mínimo 8 caracteres |
 | `NUMERO_TRANSFERENCIA` | Número al que se transfieren las llamadas que requieren una persona |
+| `INTEGRACION_TOKEN` | Bearer de `/llamadas`, `/auditoria`, `/revision`, `/conciliacion`, `/informes` y `/consola/api`. Mínimo 16 caracteres |
 | `CRON_SECRET` | Activa `/tareas/*`. Vercel envía `Authorization: Bearer <CRON_SECRET>` en cada invocación de cron |
+| `ELEVENLABS_AGENT_ID` | Obligatorio **si** `ELEVENLABS_API_KEY` está definido: sin él la plataforma rechaza cada originación |
 
-Opcionales: `CLASIFICADOR=anthropic` con `ANTHROPIC_API_KEY`, y las tres
-variables `ELEVENLABS_*` para originar llamadas reales. Sin ellas el servicio usa
-el clasificador por reglas y el cliente de voz simulado. Para escribir el agente
-desde este despliegue hace falta además `SERVICIO_URL_PUBLICA` (el dominio de
-Vercel, con `https://`); la voz «Catalina» se busca por nombre, o se fija con
-`ELEVENLABS_VOICE_ID`; ver
+Si falta cualquiera de estas, la función arranca, falla al cargar la
+configuración y **toda petición responde 500**, incluida `/salud`. Antes de
+pasar a producción conviene reproducir el arranque en local con las mismas
+variables (`NODE_ENV=production VERCEL=1 node api/index.js` envuelto en un
+servidor HTTP) y comprobar que `/salud` responde `200`.
+
+Opcionales: `CLASIFICADOR=anthropic` con `ANTHROPIC_API_KEY`, y las variables
+`ELEVENLABS_*` para originar llamadas reales. Sin ellas el servicio usa el
+clasificador por reglas y el cliente de voz simulado. Para escribir el agente
+desde este despliegue hacen falta además `SERVICIO_URL_PUBLICA` (el dominio de
+Vercel, con `https://`) y `ADMIN_TOKEN`; la voz «Catalina» se busca por nombre,
+o se fija con `ELEVENLABS_VOICE_ID`; ver
 [`telefonia.md`](telefonia.md#el-agente-lo-define-este-servicio).
+
+## Protección de despliegues
+
+Vercel Authentication (*Deployment Protection*) protege por defecto todos los
+despliegues sin dominio propio, incluida producción en `*.vercel.app`. Con esa
+protección activa, **ElevenLabs no puede alcanzar `/v1/chat/completions`** ni
+entregar webhooks: recibe una página de inicio de sesión de Vercel en vez del
+servicio. Para validar el modelo de llamado hay que limitar la protección a
+*Preview* (Settings → Deployment Protection → Vercel Authentication → *Only
+Preview Deployments*) o usar un dominio propio. El servicio tiene su propia
+autenticación en todas las rutas que tratan datos; la única ruta pública sin
+datos es `/consola`, que es solo la página.
+
+## Límite de cuerpo
+
+Las funciones de Vercel aceptan cuerpos de hasta 4,5 MB. Una planilla de la
+consola viaja en base64, así que el archivo no debe superar unos 3 MB: son
+miles de filas. Para más, dividir la planilla.
 
 Los números de salida y los destinos que se configuran en `/admin/*` viven en la
 base, y aquí la base es efímera: se pierden al reciclarse la instancia. Para una
