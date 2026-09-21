@@ -20,6 +20,20 @@ import { crearDespachador, MARGEN_EN_CURSO_MIN } from '../telefonia/despachador.
 import { reglasParaAgente, resolverDestino } from '../telefonia/transferencias.js';
 import { compararAgente, cuerpoAgente, type DefinicionAgente } from '../telefonia/agente.js';
 import { conciliar } from '../conciliacion/conciliar.js';
+import { resumirLlamada } from './estado-llamada.js';
+
+/**
+ * Rutas que tratan datos de pacientes y que usan los sistemas clientes. Con
+ * INTEGRACION_TOKEN definido exigen `Authorization: Bearer <token>`. Las demás
+ * rutas tienen su propia autenticación (/v1, /webhooks, /admin, /tareas) o son
+ * públicas por diseño (/salud).
+ */
+export const RUTAS_DE_INTEGRACION = ['/llamadas', '/auditoria', '/revision', '/conciliacion'] as const;
+
+export function esRutaDeIntegracion(url: string): boolean {
+  const ruta = url.split('?')[0] ?? '';
+  return RUTAS_DE_INTEGRACION.some((r) => ruta === r || ruta.startsWith(`${r}/`));
+}
 
 /** Variables sin las cuales no se puede escribir la definición del agente. */
 export function faltantesParaAgente(cfg: Config): string[] {
@@ -113,6 +127,8 @@ export interface Servicio {
 export interface OpcionesServicio {
   /** Sustituye la pausa entre originaciones. Solo para pruebas. */
   esperar?: (ms: number) => Promise<void>;
+  /** Reloj del despacho inmediato. Solo para pruebas. */
+  reloj?: () => Date;
 }
 
 const CambioNumero = z
@@ -197,6 +213,18 @@ export function construirServicio(cfg: Config, clienteVoz?: ClienteVoz, opciones
 
   const log = app.log;
 
+  if (cfg.INTEGRACION_TOKEN) {
+    const token = cfg.INTEGRACION_TOKEN;
+    app.addHook('onRequest', async (req, reply) => {
+      if (!esRutaDeIntegracion(req.url)) return undefined;
+      if (req.headers.authorization !== `Bearer ${token}`) {
+        reply.code(401).send({ error: 'No autorizado' });
+        return reply;
+      }
+      return undefined;
+    });
+  }
+
   registrarWebhooks(app, { cola, trabajos, resultados, secreto: cfg.WEBHOOK_SECRETO, log });
   registrarEndpointLLM(app, {
     clasificador: crearClasificador(cfg),
@@ -224,7 +252,19 @@ export function construirServicio(cfg: Config, clienteVoz?: ClienteVoz, opciones
   // Programación de llamadas. Endpoint interno: el sistema clínico de FALP empuja
   // aquí las indicaciones ya emitidas por el equipo tratante.
   app.post('/llamadas', async (req, reply) => {
-    const b = req.body as { idPaciente?: string; telefono?: string; contexto?: unknown; programadoPara?: string };
+    const b = req.body as {
+      idPaciente?: string;
+      telefono?: string;
+      contexto?: unknown;
+      programadoPara?: string;
+      /**
+       * Intentar originar en esta misma petición, sin esperar al ciclo del
+       * despachador. Para quien programa una llamada y espera que suene ahora.
+       * Se respetan igual la ventana horaria y la capacidad: si no se puede,
+       * la llamada queda en cola y la respuesta lo dice.
+       */
+      inmediata?: boolean;
+    };
     if (!b?.idPaciente || !b?.telefono || !b?.contexto) {
       return reply.code(400).send({ error: 'Faltan idPaciente, telefono o contexto' });
     }
@@ -234,7 +274,31 @@ export function construirServicio(cfg: Config, clienteVoz?: ClienteVoz, opciones
       contexto: b.contexto,
       ...(b.programadoPara ? { programadoPara: b.programadoPara } : {}),
     });
-    return r.ok ? reply.code(201).send(r) : reply.code(422).send(r);
+    if (!r.ok) return reply.code(422).send(r);
+
+    if (b.inmediata === true && r.idTrabajo) {
+      const lote = await despachador.despacharLote((opciones.reloj ?? (() => new Date()))());
+      const t = trabajos.porId(r.idTrabajo);
+      const originada = t?.estado === 'despachado';
+      const motivo = originada
+        ? 'La llamada se originó.'
+        : t?.estado === 'fallido'
+          ? 'La plataforma no aceptó la llamada.'
+          : lote.despachados === 0 && lote.fallidos === 0 && lote.omitidos === 0
+            ? 'Fuera de ventana horaria o sin números de salida activos: la llamada queda en cola.'
+            : 'Sin capacidad libre en este momento: la llamada queda en cola.';
+      return reply.code(201).send({ ...r, despacho: { intentado: true, originada, motivo } });
+    }
+    return reply.code(201).send({ ...r, despacho: { intentado: false, originada: false, motivo: 'La llamada queda en cola.' } });
+  });
+
+  // Resumen de una llamada para el sistema que la programó: en qué está y, si
+  // terminó, el desenlace. No incluye lo que dijo el paciente.
+  app.get('/llamadas/:id', async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const t = trabajos.porId(id);
+    if (!t) return reply.code(404).send({ error: 'No hay ninguna llamada con ese identificador.' });
+    return resumirLlamada(t, resultados.porLlamada(id));
   });
 
   app.get('/auditoria/:idLlamada', async (req) => {

@@ -65,7 +65,7 @@ Están implementados como código y cubiertos por pruebas con umbral del 100 %.
 
 ```bash
 npm install
-npm test                  # 99 pruebas, sin red
+npm test                  # 110 pruebas, sin red
 npm run simular -- alarma # recorre un escenario completo en consola
 npm run dev               # servicio en :8080
 npm run aprovisionar      # crea o reescribe el agente en la plataforma de voz
@@ -92,13 +92,18 @@ repite    el paciente pide repetir la indicación
 
 | Método | Ruta | Para qué |
 |---|---|---|
-| `POST` | `/llamadas` | El sistema clínico empuja una indicación ya emitida y programa la llamada |
+| `POST` | `/llamadas` | El sistema clínico empuja una indicación ya emitida y programa la llamada. Con `inmediata` intenta originarla en el acto |
+| `GET` | `/llamadas/:id` | En qué está una llamada y, si terminó, su desenlace. Sin lo que dijo el paciente. Ver [`docs/integracion.md`](docs/integracion.md) |
 | `POST` | `/v1/chat/completions` | Lo invoca la plataforma de voz en cada turno. Es la máquina de estados vestida de LLM |
 | `POST` | `/webhooks/postcall` | Recibe el cierre de llamada. Verifica HMAC y encola antes de procesar |
 | `GET` | `/revision` | Cola de revisión humana. Es la bandeja del equipo clínico |
 | `GET` | `/auditoria/:idLlamada` | Traza completa de una llamada, transición por transición |
 | `GET` | `/conciliacion` | Llamadas originadas sin resultado recibido |
 | `GET` | `/salud` | Estado del servicio y profundidad de la cola |
+
+Las rutas `/llamadas`, `/auditoria`, `/revision` y `/conciliacion` tratan datos
+de pacientes y exigen `Authorization: Bearer <INTEGRACION_TOKEN>`. En
+producción el servicio no arranca sin ese token.
 | `GET` | `/admin/numeros` | Grupo de números de salida y su ocupación. Requiere `ADMIN_TOKEN` |
 | `POST` | `/admin/numeros/sincronizar` | Lee los números importados en la plataforma. Los nuevos quedan inactivos |
 | `PATCH` | `/admin/numeros/:id` | Activa, desactiva o cambia el techo de un número |

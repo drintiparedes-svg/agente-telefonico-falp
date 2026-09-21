@@ -267,6 +267,7 @@ describe('Sincronización del agente por la API de administración', () => {
         WEBHOOK_SECRETO: 'secreto-de-produccion-1234567890',
         LLM_TOKEN: 'token-de-produccion',
         NUMERO_TRANSFERENCIA: RESPALDO,
+        INTEGRACION_TOKEN: 'integracion-de-produccion-1234',
         ELEVENLABS_API_KEY: 'clave',
         ELEVENLABS_RETENCION_CERO: 'false',
       } as NodeJS.ProcessEnv),

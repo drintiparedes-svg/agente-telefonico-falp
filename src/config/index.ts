@@ -86,6 +86,14 @@ const Esquema = z.object({
   /** `conference` permite avisar al operador; `blind` conserva el caller ID y no avisa. */
   TRANSFERENCIA_TIPO: z.enum(['conference', 'blind']).default('conference'),
 
+  /**
+   * Token que presentan los sistemas que programan llamadas y leen resultados
+   * (la agenda, la ficha, un asistente). Protege /llamadas, /auditoria,
+   * /revision y /conciliacion. Vacío: esos endpoints quedan abiertos, lo que
+   * solo es admisible en desarrollo; en producción es obligatorio.
+   */
+  INTEGRACION_TOKEN: z.preprocess((v) => (v === '' ? undefined : v), z.string().min(16).optional()),
+
   /** Token de los endpoints /admin/*. Sin él, esos endpoints no existen. */
   ADMIN_TOKEN: z.preprocess((v) => (v === '' ? undefined : v), z.string().min(16).optional()),
 
@@ -130,10 +138,11 @@ export function cargarConfig(env: NodeJS.ProcessEnv = process.env): Config {
     if (r.data.WEBHOOK_SECRETO.startsWith('cambiar-en-produccion')) problemas.push('WEBHOOK_SECRETO');
     if (r.data.LLM_TOKEN.startsWith('cambiar-en-produccion')) problemas.push('LLM_TOKEN');
     if (r.data.NUMERO_TRANSFERENCIA === '') problemas.push('NUMERO_TRANSFERENCIA');
+    if (!r.data.INTEGRACION_TOKEN) problemas.push('INTEGRACION_TOKEN');
     if (problemas.length > 0) {
       throw new Error(
         `No se puede arrancar en producción con estos valores sin definir: ${problemas.join(', ')}. ` +
-          'Un agente clínico sin ruta de transferencia a persona no debe operar.',
+          'Un agente clínico sin ruta de transferencia a persona, o con sus resultados abiertos a cualquiera, no debe operar.',
       );
     }
     // Con plataforma real, la retención cero no es opcional: es la condición bajo
