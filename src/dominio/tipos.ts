@@ -3,7 +3,7 @@
  *
  * Principio rector: la instrucción clínica NUNCA se genera. Llega desde la ficha
  * como dato ya emitido por el equipo tratante y el agente solo la comunica y
- * verifica comprensión. Ver docs/seguridad-clinica.md.
+ * verifica comprensión. Ver docs/arquitectura.md y docs/cumplimiento.md.
  */
 import { z } from 'zod';
 

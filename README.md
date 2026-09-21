@@ -65,7 +65,7 @@ Están implementados como código y cubiertos por pruebas con umbral del 100 %.
 
 ```bash
 npm install
-npm test                  # 121 pruebas, sin red
+npm test                  # 139 pruebas, sin red
 npm run simular -- alarma # recorre un escenario completo en consola
 npm run dev               # servicio en :8080
 npm run aprovisionar      # crea o reescribe el agente en la plataforma de voz
@@ -106,7 +106,7 @@ repite    el paciente pide repetir la indicación
 | `GET` | `/admin/destinos` | Destinos de transferencia y número de respaldo |
 | `PUT` | `/admin/destinos/:id` | Crea o cambia un destino por motivo, servicio y horario |
 | `GET` | `/admin/agente` | Compara el agente de la plataforma con la definición de este servicio. Lista cambios manuales |
-| `POST` | `/admin/agente/sincronizar` | Reescribe la definición completa del agente: LLM propio, voz, privacidad, herramientas y reglas |
+| `POST` | `/admin/agente/sincronizar` | Reescribe la definición completa del agente: LLM propio, voz y fondo, privacidad, herramientas y reglas |
 | `POST` | `/admin/agente/sincronizar-destinos` | Solo las reglas de transferencia. Más barato tras cambiar un destino |
 
 Las rutas `/llamadas`, `/auditoria`, `/revision` y `/conciliacion` tratan datos
@@ -123,6 +123,7 @@ src/
     tipos.ts         Esquemas. Una indicación incompleta no pasa de aquí.
     checklist/
       guion.ts       TODAS las líneas que el agente puede pronunciar.
+      pausas.ts      Expresiones neutras de pausa. Conjunto cerrado y determinista.
       maquina.ts     Máquina de estados determinista.
     guardrails/      Compuertas de seguridad como condiciones del programa.
     criterios/       Evaluación determinista y extracción estructurada.
@@ -143,7 +144,8 @@ src/
 **Funciona hoy:** máquina de estados completa, guardrails, evaluación determinista,
 endpoint de LLM con streaming y function calling, recepción firmada de webhooks,
 cola durable, despachador con ventana horaria y control de concurrencia,
-conciliación, auditoría y simulador.
+conciliación, auditoría, simulador, definición completa del agente con teclado
+de fondo, y expresiones de pausa en español chileno. Ver [`docs/voz.md`](docs/voz.md).
 
 **Falta antes de un piloto con pacientes reales:**
 
@@ -153,7 +155,8 @@ conciliación, auditoría y simulador.
 - Conversión a plan Enterprise con retención cero y contrato de encargo firmado.
 - Evaluación de impacto en protección de datos, previa y obligatoria.
 - Validación del guion por el equipo tratante, con responsable clínico nombrado.
-- Selección y validación de voz con pacientes reales.
+- Selección y validación de voz con pacientes reales, incluidas las expresiones
+  de pausa, que son texto que el paciente oye.
 
 Ver [`docs/cumplimiento.md`](docs/cumplimiento.md) para el detalle de lo que la
 normativa exige y qué parte de eso resuelve este código.

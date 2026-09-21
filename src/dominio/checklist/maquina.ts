@@ -16,6 +16,7 @@ import {
 import { evaluarGuardrails, verificarContenidoCerrado, type Veredicto } from '../guardrails/index.js';
 import { guion, todasLasLineas } from './guion.js';
 import { coincideDiaMes, coincideDigitos, coincideHora, extraerHoraDicha, formatearHora } from './numeros.js';
+import { componerConPausa, lineasConPausa } from './pausas.js';
 
 export interface EstadoLlamada {
   idLlamada: string;
@@ -83,11 +84,46 @@ export function abrir(ctx: ContextoLlamada, st: EstadoLlamada): ResultadoPaso {
   return { estado: nuevo, salida, transferir: false, terminar: false };
 }
 
+export interface OpcionesTurno {
+  /**
+   * Expresión de pausa que el agente ya pronunció (o va a pronunciar) antes de
+   * la línea de este turno. Se antepone a la salida y queda en la auditoría
+   * como parte literal de lo que oyó el paciente. Ver pausas.ts.
+   */
+  expresionPausa?: string;
+}
+
 /**
  * Avanza un turno. Recibe lo que dijo el paciente y su clasificación.
  * Devuelve el nuevo estado y la línea a pronunciar.
  */
 export function avanzar(
+  ctx: ContextoLlamada,
+  st: EstadoLlamada,
+  entradaPaciente: string,
+  cls: Clasificacion,
+  opciones: OpcionesTurno = {},
+): ResultadoPaso {
+  const r = avanzarSinPausa(ctx, st, entradaPaciente, cls);
+  return anteponerPausa(r, opciones.expresionPausa ?? '');
+}
+
+/**
+ * Antepone la expresión de pausa a la salida del turno y a la entrada de
+ * auditoría que ese turno acaba de registrar, para que ambas digan lo mismo.
+ */
+function anteponerPausa(r: ResultadoPaso, expresion: string): ResultadoPaso {
+  if (expresion === '' || r.salida === '') return r;
+  const salida = componerConPausa(expresion, r.salida);
+  const auditoria = [...r.estado.auditoria];
+  const ultimo = auditoria.at(-1);
+  if (ultimo && ultimo.salidaAgente === r.salida) {
+    auditoria[auditoria.length - 1] = { ...ultimo, salidaAgente: salida };
+  }
+  return { ...r, salida, estado: { ...r.estado, auditoria } };
+}
+
+function avanzarSinPausa(
   ctx: ContextoLlamada,
   st: EstadoLlamada,
   entradaPaciente: string,
@@ -417,5 +453,7 @@ export function extraerHora(texto: string): string {
  */
 export function validarSalida(ctx: ContextoLlamada, salida: string): { valida: boolean; motivo: string } {
   if (salida === '') return { valida: true, motivo: '' };
-  return verificarContenidoCerrado(salida, todasLasLineas(ctx));
+  // La lista blanca admite cada línea sola o precedida por una expresión de
+  // pausa del conjunto cerrado. Nada más.
+  return verificarContenidoCerrado(salida, lineasConPausa(todasLasLineas(ctx)));
 }

@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { MODELOS_TTS } from '../telefonia/agente.js';
+import { FONDOS, MODELOS_TTS } from '../telefonia/agente.js';
 
 const Esquema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
@@ -67,6 +67,29 @@ const Esquema = z.object({
     .preprocess((v) => (typeof v === 'string' ? v.trim().toLowerCase() : v), z.enum(['true', 'false', '1', '0']))
     .transform((v) => v === 'true' || v === '1')
     .default('true'),
+
+  /**
+   * Parámetros de la voz que se escriben en el agente. Estabilidad baja: más
+   * expresiva; alta: más plana. Velocidad algo menor que 1 para pacientes mayores.
+   */
+  VOZ_ESTABILIDAD: z.coerce.number().min(0).max(1).default(0.6),
+  VOZ_SIMILITUD: z.coerce.number().min(0).max(1).default(0.8),
+  VOZ_VELOCIDAD: z.coerce.number().min(0.7).max(1.2).default(0.95),
+
+  /**
+   * Sonido de fondo que la plataforma mezcla bajo la voz durante toda la llamada.
+   * `typing` es un teclado: hace verosímil la pausa mientras este servicio
+   * clasifica y elige la línea. `ninguno` lo quita. Ver docs/voz.md.
+   */
+  FONDO_SONIDO: z.enum(FONDOS).default('typing'),
+  FONDO_VOLUMEN: z.coerce.number().min(0).max(1).default(0.15),
+
+  /**
+   * Expresiones de pausa («Ya, un segundito...») que el agente pronuncia mientras
+   * clasifica lo que dijo el paciente. Conjunto cerrado y determinista; ver
+   * src/dominio/checklist/pausas.ts. `no` las desactiva sin tocar el guion.
+   */
+  EXPRESIONES_PAUSA: z.enum(['si', 'no']).default('si'),
 
   /**
    * Proveedor con que se importó ELEVENLABS_PHONE_NUMBER_ID. `twilio` es la

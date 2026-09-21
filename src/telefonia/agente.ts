@@ -22,6 +22,47 @@ export const MODELOS_TTS = [
 ] as const;
 export type ModeloTts = (typeof MODELOS_TTS)[number];
 
+/**
+ * Presets de sonido de fondo de la plataforma con sentido en una llamada
+ * clínica. `typing` es un teclado: el paciente oye que hay alguien escribiendo
+ * mientras el agente calla, lo que hace verosímil la pausa en que este servicio
+ * clasifica y elige la línea. El agente no lo oye y no entra al reconocimiento.
+ */
+export const FONDOS = ['typing', 'office1', 'office2', 'ninguno'] as const;
+export type Fondo = (typeof FONDOS)[number];
+
+/** Parámetros de la voz. Los valores por defecto son los validados para pacientes mayores. */
+export interface ParametrosVoz {
+  /** 0 a 1. Bajo: más expresiva y variable. Alto: más plana y predecible. */
+  estabilidad: number;
+  /** 0 a 1. Cuánto se parece a la voz original de la biblioteca. */
+  similitud: number;
+  /** 1 es la nominal. Algo menos ayuda a pacientes mayores. */
+  velocidad: number;
+}
+
+export const VOZ_POR_DEFECTO: ParametrosVoz = { estabilidad: 0.6, similitud: 0.8, velocidad: 0.95 };
+
+export interface SonidoFondo {
+  tipo: Fondo;
+  /** 0 a 1. La plataforma recomienda 0,15 desde agosto de 2026. */
+  volumen: number;
+}
+
+export const FONDO_POR_DEFECTO: SonidoFondo = { tipo: 'typing', volumen: 0.15 };
+
+/** Valor de `conversation_config.conversation.background_sound`. `null` lo quita. */
+export function cuerpoSonidoFondo(f: SonidoFondo): Record<string, unknown> | null {
+  if (f.tipo === 'ninguno') return null;
+  return {
+    source_type: 'preset',
+    source_id: f.tipo,
+    volume: f.volumen,
+    // Sin crossfade se oye un clic cada vez que el bucle reinicia.
+    crossfade_loop: true,
+  };
+}
+
 /** Identificador con que este servicio se presenta como «modelo». Sin efecto funcional. */
 export const MODELO_PROPIO = 'falp-checklist-v1';
 
@@ -51,6 +92,10 @@ export interface DefinicionAgente {
   /** Webhook post-llamada del workspace. Sin él la plataforma no notifica cierres. */
   webhookPostLlamadaId: string | null;
   reglas: readonly ReglaTransferencia[];
+  /** Estabilidad, similitud y velocidad. Sin esto, `VOZ_POR_DEFECTO`. */
+  voz?: ParametrosVoz;
+  /** Sonido de fondo bajo la voz. Sin esto, `FONDO_POR_DEFECTO` (teclado). */
+  fondo?: SonidoFondo;
 }
 
 /** Ruta que la plataforma compone con la URL base: `<url>/chat/completions`. */
@@ -98,6 +143,8 @@ export function herramientasSistema(reglas: readonly ReglaTransferencia[]): Reco
  * Cada valor tiene una razón clínica u operativa; las no obvias van comentadas.
  */
 export function cuerpoAgente(d: DefinicionAgente): Record<string, unknown> {
+  const voz = d.voz ?? VOZ_POR_DEFECTO;
+  const fondo = d.fondo ?? FONDO_POR_DEFECTO;
   return {
     name: d.nombre,
     tags: ['falp', 'preparacion-pre-procedimiento'],
@@ -136,10 +183,10 @@ export function cuerpoAgente(d: DefinicionAgente): Record<string, unknown> {
         // El guion entrega horas como «22:00» y confía en que la voz las lea como
         // hora. Esa normalización la hace la plataforma, no un modelo.
         text_normalisation_type: 'elevenlabs',
-        stability: 0.6,
-        similarity_boost: 0.8,
+        stability: voz.estabilidad,
+        similarity_boost: voz.similitud,
         // Paciente oncológico, a menudo mayor: algo más lento que el valor por defecto.
-        speed: 0.95,
+        speed: voz.velocidad,
         optimize_streaming_latency: 3,
       },
       asr: {
@@ -158,6 +205,9 @@ export function cuerpoAgente(d: DefinicionAgente): Record<string, unknown> {
       conversation: {
         max_duration_seconds: DURACION_MAX_SEG,
         text_only: false,
+        // Se mezcla bajo la voz durante toda la llamada y sigue sonando cuando el
+        // paciente interrumpe. No se puede cambiar por llamada. Ver docs/voz.md.
+        background_sound: cuerpoSonidoFondo(fondo),
       },
     },
     platform_settings: {
@@ -233,6 +283,11 @@ export function compararAgente(d: DefinicionAgente, actual: unknown): Discrepanc
     ['conversation_config.tts.voice_id', d.voiceId, leer('conversation_config.tts.voice_id')],
     ['conversation_config.tts.model_id', d.ttsModelo, leer('conversation_config.tts.model_id')],
     ['conversation_config.conversation.max_duration_seconds', DURACION_MAX_SEG, leer('conversation_config.conversation.max_duration_seconds')],
+    [
+      'conversation_config.conversation.background_sound.source_id',
+      (d.fondo ?? FONDO_POR_DEFECTO).tipo === 'ninguno' ? null : (d.fondo ?? FONDO_POR_DEFECTO).tipo,
+      leer('conversation_config.conversation.background_sound.source_id') ?? null,
+    ],
     ['platform_settings.privacy.record_voice', false, leer('platform_settings.privacy.record_voice') ?? true],
     ['platform_settings.privacy.retention_days', d.retencionDias, leer('platform_settings.privacy.retention_days')],
     ['platform_settings.privacy.zero_retention_mode', d.retencionCero, leer('platform_settings.privacy.zero_retention_mode') ?? false],

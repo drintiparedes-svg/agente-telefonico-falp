@@ -47,9 +47,10 @@ que genérico, y después la prioridad.
 
 ElevenLabs solo transfiere a números precargados en las reglas del agente. Por
 eso, después de cambiar destinos, hay que sincronizar el agente. El servicio
-escribe las herramientas `end_call` y `transfer_to_number` del agente. Si alguien
-agrega otras herramientas de sistema en el panel, hay que verificar que la
-sincronización no las borre.
+escribe las herramientas `end_call` y `transfer_to_number` del agente; la
+sincronización completa escribe además la voz y el sonido de fondo (ver
+[`voz.md`](voz.md)). Si alguien agrega otras herramientas de sistema en el
+panel, hay que verificar que la sincronización no las borre.
 
 ## Cómo escala
 

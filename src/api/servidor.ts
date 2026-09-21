@@ -12,7 +12,7 @@ import {
   crearRepoSesiones,
   crearRepoTrabajos,
 } from '../persistencia/repositorios.js';
-import { crearClasificador } from '../llm/clasificador.js';
+import { crearClasificador, type Clasificador } from '../llm/clasificador.js';
 import { registrarEndpointLLM } from '../llm/servidor.js';
 import { crearTrabajadorCola, registrarWebhooks } from '../webhooks/receptor.js';
 import { ClienteElevenLabs, ClienteVozSimulado, type ClienteVoz } from '../telefonia/elevenlabs.js';
@@ -79,6 +79,8 @@ export function definicionAgente(
     retencionDias: cfg.RETENCION_AUDIO_DIAS,
     webhookPostLlamadaId: p.webhookPostLlamadaId ?? cfg.ELEVENLABS_POSTCALL_WEBHOOK_ID ?? null,
     reglas: p.reglas,
+    voz: { estabilidad: cfg.VOZ_ESTABILIDAD, similitud: cfg.VOZ_SIMILITUD, velocidad: cfg.VOZ_VELOCIDAD },
+    fondo: { tipo: cfg.FONDO_SONIDO, volumen: cfg.FONDO_VOLUMEN },
   };
 }
 
@@ -157,6 +159,8 @@ export interface OpcionesServicio {
   esperar?: (ms: number) => Promise<void>;
   /** Reloj del despacho inmediato. Solo para pruebas. */
   reloj?: () => Date;
+  /** Sustituye el clasificador que define la configuración. Solo para pruebas. */
+  clasificador?: Clasificador;
 }
 
 const CambioNumero = z
@@ -258,13 +262,14 @@ export function construirServicio(cfg: Config, clienteVoz?: ClienteVoz, opciones
 
   registrarWebhooks(app, { cola, trabajos, resultados, secreto: cfg.WEBHOOK_SECRETO, log });
   registrarEndpointLLM(app, {
-    clasificador: crearClasificador(cfg),
+    clasificador: opciones.clasificador ?? crearClasificador(cfg),
     sesiones,
     auditoria,
     resultados,
     resolverTransferencia: (p) =>
       resolverDestino(destinos.activos(), { ...p, ahora: new Date() }, cfg.NUMERO_TRANSFERENCIA).e164,
     token: cfg.LLM_TOKEN,
+    expresionesPausa: cfg.EXPRESIONES_PAUSA === 'si',
     log,
   });
 
